@@ -6,7 +6,10 @@
     <body class="min-h-screen bg-white dark:bg-zinc-800">
         <flux:sidebar sticky collapsible="mobile" class="border-e border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
             <flux:sidebar.header>
-                <x-app-logo :sidebar="true" href="{{ route('dashboard') }}" wire:navigate />
+                <div class="flex flex-row w-full items-center justify-center gap-2">
+                    <img class="size-12" src="{{ asset('images/logo_eriao.png') }}" alt="">
+                    <p class="text-xs font-bold line-clamp-2">EXTERNAL RELATIONS AND<br>INTERNATIONAL AFFAIRS OFFICE</p>
+                </div>
                 <flux:sidebar.collapse class="lg:hidden" />
             </flux:sidebar.header>
 
@@ -15,22 +18,28 @@
                     <flux:sidebar.item icon="home" :href="route('dashboard')" :current="request()->routeIs('dashboard')" wire:navigate>
                         {{ __('Dashboard') }}
                     </flux:sidebar.item>
+
+                    <flux:sidebar.item icon="presentation-chart-bar" :href="route('reports')" :current="request()->routeIs('reports')" wire:navigate>
+                        {{ __('Reports') }}
+                    </flux:sidebar.item>
+
+                    <flux:sidebar.item icon="shopping-cart" :href="route('pos')" :current="request()->routeIs('pos')" wire:navigate>
+                        {{ __('Point of Sale') }}
+                    </flux:sidebar.item>
+
+                    <flux:sidebar.item icon="inbox" :href="route('inventory')" :current="request()->routeIs('inventory')" wire:navigate>
+                        {{ __('Inventory') }}
+                    </flux:sidebar.item>
+
+                    <flux:sidebar.item icon="user-group" :href="route('user-management')" :current="request()->routeIs('user-management')" wire:navigate>
+                        {{ __('User Management') }}
+                    </flux:sidebar.item>
                 </flux:sidebar.group>
             </flux:sidebar.nav>
 
             <flux:spacer />
 
-            <flux:sidebar.nav>
-                <flux:sidebar.item icon="folder-git-2" href="https://github.com/laravel/livewire-starter-kit" target="_blank">
-                    {{ __('Repository') }}
-                </flux:sidebar.item>
-
-                <flux:sidebar.item icon="book-open-text" href="https://laravel.com/docs/starter-kits#livewire" target="_blank">
-                    {{ __('Documentation') }}
-                </flux:sidebar.item>
-            </flux:sidebar.nav>
-
-            <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->name" />
+            <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->first_name" />
         </flux:sidebar>
 
         <!-- Mobile User Menu -->
@@ -50,12 +59,12 @@
                         <div class="p-0 text-sm font-normal">
                             <div class="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
                                 <flux:avatar
-                                    :name="auth()->user()->name"
+                                    :name="auth()->user()->first_name"
                                     :initials="auth()->user()->initials()"
                                 />
 
                                 <div class="grid flex-1 text-start text-sm leading-tight">
-                                    <flux:heading class="truncate">{{ auth()->user()->name }}</flux:heading>
+                                    <flux:heading class="truncate">{{ auth()->user()->first_name }}</flux:heading>
                                     <flux:text class="truncate">{{ auth()->user()->email }}</flux:text>
                                 </div>
                             </div>
