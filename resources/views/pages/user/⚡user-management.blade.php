@@ -12,6 +12,7 @@ new class extends Component
 
     public $sortBy = 'created_at';
     public $sortDirection = 'desc';
+    public $summary = [];
 
     public function sort($column) {
         if ($this->sortBy === $column) {
