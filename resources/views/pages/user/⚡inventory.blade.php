@@ -27,6 +27,7 @@ new class extends Component
     public $productMax = 0;
 
     public string $productStatus = 'available';
+    public $summary = [];
 
     public function mount()
     {
