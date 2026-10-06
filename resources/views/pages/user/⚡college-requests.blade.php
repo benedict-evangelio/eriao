@@ -1,7 +1,7 @@
 <?php
 
-use App\Models\CollegeRequest;
 use App\Models\College;
+use App\Models\CollegeRequest;
 use App\Models\ProductItem;
 use Flux\Flux;
 use Illuminate\Support\Facades\DB;
@@ -59,21 +59,19 @@ new class extends Component
     {
         return ProductItem::query()
             ->orderBy('name')
-            ->get(['id', 'name', 'price', 'front_quantity', 'status']);
+            ->get(['id', 'name', 'price', 'warehouse_quantity', 'status']);
     }
 
     #[Computed]
     public function requests()
     {
         return CollegeRequest::query()
-            ->when($this->statusFilter !== 'active' && $this->statusFilter !== 'all', fn ($query) =>
-                $query->where('college_requests.status', $this->statusFilter)
+            ->when($this->statusFilter !== 'active' && $this->statusFilter !== 'all', fn ($query) => $query->where('college_requests.status', $this->statusFilter)
             )
-            ->when($this->statusFilter === 'active', fn ($query) =>
-                $query->whereIn('college_requests.status', ['pending', 'signed'])
+            ->when($this->statusFilter === 'active', fn ($query) => $query->whereIn('college_requests.status', ['pending', 'signed'])
             )
             ->when(trim($this->search) !== '', function ($query) {
-                $search = '%' . trim($this->search) . '%';
+                $search = '%'.trim($this->search).'%';
 
                 $query->where(function ($query) use ($search) {
                     $query->where('college_requests.reference_number', 'like', $search)
@@ -91,7 +89,7 @@ new class extends Component
     #[Computed]
     public function selectedRequestDetails(): ?CollegeRequest
     {
-        if (!$this->selectedRequestId) {
+        if (! $this->selectedRequestId) {
             return null;
         }
 
@@ -267,20 +265,20 @@ new class extends Component
             foreach ($items as $item) {
                 $product = $products->get($item->product_id);
 
-                if (!$product || $product->status !== 'available' || (int) $product->front_quantity < (int) $item->quantity) {
+                if (! $product || $product->status !== 'available' || (int) $product->warehouse_quantity < (int) $item->quantity) {
                     throw ValidationException::withMessages([
-                        'release' => 'Insufficient front inventory for one or more requested items. No inventory was released.',
+                        'release' => 'One or more requested items are unavailable or have insufficient warehouse inventory. No inventory was released.',
                     ]);
                 }
             }
 
             foreach ($items as $item) {
                 $product = $products->get($item->product_id);
-                $frontQuantity = (int) $product->front_quantity - (int) $item->quantity;
-                $totalQuantity = $frontQuantity + (int) $product->warehouse_quantity;
+                $warehouseQuantity = (int) $product->warehouse_quantity - (int) $item->quantity;
+                $totalQuantity = (int) $product->front_quantity + $warehouseQuantity;
 
                 $product->update([
-                    'front_quantity' => $frontQuantity,
+                    'warehouse_quantity' => $warehouseQuantity,
                     'quantity' => $totalQuantity,
                     'status' => $totalQuantity > 0 ? 'available' : 'out_of_stock',
                 ]);
@@ -295,7 +293,7 @@ new class extends Component
             $request->activities()->create([
                 'user_id' => auth()->id(),
                 'action' => 'Items released to college',
-                'details' => 'Requested items were released; front inventory was deducted.',
+                'details' => 'Requested items were released; warehouse inventory was deducted.',
             ]);
         });
 
@@ -333,7 +331,6 @@ new class extends Component
         $this->notes = '';
         $this->resetValidation();
     }
-
 };
 ?>
 
@@ -478,7 +475,7 @@ new class extends Component
                 <div class="flex items-center justify-between gap-3">
                     <div>
                         <p class="text-sm font-medium">Inventory items</p>
-                        <p class="text-xs text-zinc-500">Optional. Stock is deducted only when released to the college.</p>
+                        <p class="text-xs text-zinc-500">Optional. Warehouse stock is deducted when items are released to the college.</p>
                     </div>
                     <flux:button size="sm" variant="outline" icon="plus" wire:click="addRequestItem">Add item</flux:button>
                 </div>
@@ -488,7 +485,7 @@ new class extends Component
                         <flux:select wire:model="requestItems.{{ $index }}.product_id" label="Product">
                             <flux:select.option value="">Select inventory item</flux:select.option>
                             @foreach ($this->inventoryProducts as $product)
-                                <flux:select.option value="{{ $product->id }}">{{ $product->name }} · Front: {{ $product->front_quantity }}</flux:select.option>
+                                <flux:select.option value="{{ $product->id }}">{{ $product->name }} · Warehouse: {{ $product->warehouse_quantity }}</flux:select.option>
                             @endforeach
                         </flux:select>
                         <flux:input wire:model="requestItems.{{ $index }}.quantity" type="number" min="1" label="Quantity" />

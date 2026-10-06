@@ -1,55 +1,77 @@
 <?php
 
-use Livewire\Component;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
+use Flux\Flux;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\ValidationException;
-use Flux\Flux;
-use Carbon\Carbon;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Str;
+use Livewire\Component;
 
 new class extends Component
 {
     public $totalSales = 0;
+
     public $totalTransactions = 0;
+
     public $totalProducts = 0;
+
     public $totalStock = 0;
+
     public $inventoryValue = 0;
+
     public $activeUsers = 0;
 
     public $salesChange = 0;
+
     public $transactionChange = 0;
+
     public $stockChange = 0;
+
     public $userChange = 0;
 
     public $salesLabels = [];
+
     public $salesData = [];
 
     public $categoryLabels = [];
+
     public $categoryData = [];
 
     public $paymentLabels = [];
+
     public $paymentData = [];
 
     public $recentTransactions = [];
 
     public string $reportRange = 'today';
+
     public $reportFrom;
+
     public $reportTo;
+
     public $selectedKpi = null;
+
     public $kpiDetails = [];
+
     public $kpiRecords = [];
+
     public array $transactionRecordDetails = [];
+
     public int $kpiRecordCount = 0;
+
     public int $kpiRecordsShown = 0;
+
     public int $kpiRecordLimit = 100;
 
     public string $exportFormat = 'pdf';
+
     public string $exportData = 'all';
+
     public string $exportRange = 'today';
 
     public $exportFrom;
+
     public $exportTo;
 
     public function mount()
@@ -114,6 +136,7 @@ new class extends Component
             $this->transactionChange = 0;
             $this->stockChange = 0;
             $this->userChange = 0;
+
             return;
         }
 
@@ -212,7 +235,7 @@ new class extends Component
     {
         [$from, $to] = $this->getReportDates();
 
-        if (!$from || !$to) {
+        if (! $from || ! $to) {
             return [null, null];
         }
 
@@ -271,6 +294,7 @@ new class extends Component
 
             case 'custom':
                 Flux::modal('report-timeframe')->show();
+
                 return;
 
             case 'overall':
@@ -298,7 +322,7 @@ new class extends Component
 
     protected function loadCustomReport(): void
     {
-        if (!$this->reportFrom || !$this->reportTo || $this->reportFrom > $this->reportTo) {
+        if (! $this->reportFrom || ! $this->reportTo || $this->reportFrom > $this->reportTo) {
             return;
         }
 
@@ -361,29 +385,29 @@ new class extends Component
                     return [
                         'id' => $record->id,
                         'student_id' => $record->id_number ?: trim(
-                            ($record->first_name ?? '') .
-                            ' ' .
+                            ($record->first_name ?? '').
+                            ' '.
                             ($record->last_name ?? '')
                         ),
                         'payment_method' => $record->payment_method ?? '—',
                         'reference_num' => $record->reference_num ?? '—',
                         'discount_category' => $record->discount_category ?? '—',
-                        'discount_price' => '₱' . number_format(
+                        'discount_price' => '₱'.number_format(
                             (float) ($record->discount_price ?? 0),
                             2
                         ),
-                        'tax' => '₱' . number_format(
+                        'tax' => '₱'.number_format(
                             (float) ($record->tax ?? 0),
                             2
                         ),
-                        'total_amount' => '₱' . number_format(
+                        'total_amount' => '₱'.number_format(
                             (float) ($record->total_amount ?? 0),
                             2
                         ),
                         'status' => $record->status ?? '—',
                         'employee' => trim(
-                            ($record->employee_first_name ?? '') .
-                            ' ' .
+                            ($record->employee_first_name ?? '').
+                            ' '.
                             ($record->employee_last_name ?? '')
                         ) ?: '—',
                         'created_at' => $record->created_at
@@ -398,14 +422,14 @@ new class extends Component
                 'title' => $kpi === 'sales' ? 'Total Sales Records' : 'Transaction Records',
                 'timeframe' => $this->reportRangeLabel(),
                 'value' => $kpi === 'sales'
-                    ? '₱' . number_format($this->totalSales, 2)
+                    ? '₱'.number_format($this->totalSales, 2)
                     : number_format($this->totalTransactions),
                 'description' => $kpi === 'sales'
                     ? 'These completed and paid transactions are the records contributing to Total Sales.'
                     : 'These completed and paid transactions are the records counted in Transactions.',
                 'change' => $kpi === 'sales'
-                    ? (($this->salesChange > 0 ? '+' : '') . number_format($this->salesChange, 1) . '%')
-                    : (($this->transactionChange > 0 ? '+' : '') . number_format($this->transactionChange, 1) . '%'),
+                    ? (($this->salesChange > 0 ? '+' : '').number_format($this->salesChange, 1).'%')
+                    : (($this->transactionChange > 0 ? '+' : '').number_format($this->transactionChange, 1).'%'),
             ];
         } elseif ($kpi === 'stock') {
             $query = DB::table('product_items')
@@ -445,11 +469,11 @@ new class extends Component
                         'warehouse_quantity' => number_format((int) ($record->warehouse_quantity ?? 0)),
                         'reorder_level' => number_format((int) ($record->reorder_level ?? 0)),
                         'maximum' => number_format((int) ($record->max ?? 0)),
-                        'price' => '₱' . number_format(
+                        'price' => '₱'.number_format(
                             (float) ($record->price ?? 0),
                             2
                         ),
-                        'inventory_value' => '₱' . number_format(
+                        'inventory_value' => '₱'.number_format(
                             ((float) ($record->front_quantity ?? 0) + (float) ($record->warehouse_quantity ?? 0)) *
                             (float) ($record->price ?? 0),
                             2
@@ -468,9 +492,9 @@ new class extends Component
                 'timeframe' => 'Current Inventory',
                 'value' => number_format($this->totalStock),
                 'description' => 'These product records contribute their quantities to the Inventory Stock total.',
-                'change' => ($this->stockChange > 0 ? '+' : '') . number_format($this->stockChange, 1) . '%',
+                'change' => ($this->stockChange > 0 ? '+' : '').number_format($this->stockChange, 1).'%',
                 'products' => number_format($this->totalProducts),
-                'inventory_value' => '₱' . number_format($this->inventoryValue, 2),
+                'inventory_value' => '₱'.number_format($this->inventoryValue, 2),
             ];
         } elseif ($kpi === 'users') {
             $query = DB::table('users')
@@ -501,8 +525,8 @@ new class extends Component
                     return [
                         'id' => $record->id,
                         'name' => trim(
-                            ($record->first_name ?? '') .
-                            ' ' .
+                            ($record->first_name ?? '').
+                            ' '.
                             ($record->last_name ?? '')
                         ) ?: '—',
                         'email' => $record->email ?? '—',
@@ -520,7 +544,7 @@ new class extends Component
                 'timeframe' => $this->reportRangeLabel(),
                 'value' => number_format($this->activeUsers),
                 'description' => 'These active user records match the selected timeframe and contribute to the Active Users total.',
-                'change' => ($this->userChange > 0 ? '+' : '') . number_format($this->userChange, 1) . '%',
+                'change' => ($this->userChange > 0 ? '+' : '').number_format($this->userChange, 1).'%',
             ];
         }
 
@@ -542,7 +566,7 @@ new class extends Component
             ])
             ->first();
 
-        if (!$transaction) {
+        if (! $transaction) {
             return;
         }
 
@@ -558,14 +582,14 @@ new class extends Component
             ->orderBy('orders.id')
             ->get()
             ->map(fn ($item) => [
-                'name' => $item->product_name ?? 'Missing product #' . $item->product_id,
+                'name' => $item->product_name ?? 'Missing product #'.$item->product_id,
                 'price' => (float) ($item->price ?? 0),
             ])
             ->all();
 
         $this->transactionRecordDetails = [
             'id' => $transaction->id,
-            'student_id' => $transaction->id_number ?: trim($transaction->first_name . ' ' . $transaction->last_name),
+            'student_id' => $transaction->id_number ?: trim($transaction->first_name.' '.$transaction->last_name),
             'payment_method' => $transaction->payment_method,
             'reference_num' => $transaction->reference_num,
             'discount_category' => $transaction->discount_category,
@@ -573,7 +597,7 @@ new class extends Component
             'tax' => (float) $transaction->tax,
             'total_amount' => (float) $transaction->total_amount,
             'status' => $transaction->status,
-            'employee' => trim(($transaction->employee_first_name ?? '') . ' ' . ($transaction->employee_last_name ?? '')),
+            'employee' => trim(($transaction->employee_first_name ?? '').' '.($transaction->employee_last_name ?? '')),
             'created_at' => $transaction->created_at,
             'items' => $items,
         ];
@@ -597,8 +621,8 @@ new class extends Component
                 $this->reportFrom && $this->reportTo
             )
                 ? Carbon::parse($this->reportFrom)->format('M d, Y')
-                    . ' - '
-                    . Carbon::parse($this->reportTo)->format('M d, Y')
+                    .' - '
+                    .Carbon::parse($this->reportTo)->format('M d, Y')
                 : 'Custom Date',
             default => 'Today',
         };
@@ -900,17 +924,16 @@ new class extends Component
             return;
         }
 
-        if (!$this->exportFrom || !$this->exportTo) {
-            throw ValidationException::withMessages([
-                'exportFrom' => 'Please select both a start and end date.',
-            ]);
-        }
-
-        if ($this->exportFrom > $this->exportTo) {
-            throw ValidationException::withMessages([
-                'exportTo' => 'The end date cannot be earlier than the start date.',
-            ]);
-        }
+        $this->validate([
+            'exportFrom' => ['required', 'date_format:Y-m-d'],
+            'exportTo' => ['required', 'date_format:Y-m-d', 'after_or_equal:exportFrom'],
+        ], [
+            'exportFrom.required' => 'Please select a start date.',
+            'exportFrom.date_format' => 'Please select a valid start date.',
+            'exportTo.required' => 'Please select an end date.',
+            'exportTo.date_format' => 'Please select a valid end date.',
+            'exportTo.after_or_equal' => 'The end date cannot be earlier than the start date.',
+        ]);
     }
 
     protected function exportTitle(): string
@@ -946,12 +969,12 @@ new class extends Component
             'overall' => 'Overall',
 
             'custom' => (
-                $this->exportFrom &&
-                $this->exportTo
+                Carbon::canBeCreatedFromFormat($this->exportFrom, 'Y-m-d') &&
+                Carbon::canBeCreatedFromFormat($this->exportTo, 'Y-m-d')
             )
                 ? Carbon::parse($this->exportFrom)->format('M d, Y')
-                    . ' - '
-                    . Carbon::parse($this->exportTo)->format('M d, Y')
+                    .' - '
+                    .Carbon::parse($this->exportTo)->format('M d, Y')
                 : 'Custom Date',
 
             default => 'Today',
@@ -969,6 +992,7 @@ new class extends Component
             )
             ->select([
                 'transactions.id',
+                'transactions.id_number',
                 'transactions.first_name',
                 'transactions.last_name',
                 'transactions.payment_method',
@@ -1120,10 +1144,10 @@ new class extends Component
         };
 
         $filename .= '-'
-            . $this->exportRange
-            . '-'
-            . now()->format('Y-m-d-His')
-            . '.csv';
+            .$this->exportRange
+            .'-'
+            .now()->format('Y-m-d-His')
+            .'.csv';
 
         return response()->streamDownload(
             function () use ($from, $to) {
@@ -1199,6 +1223,7 @@ new class extends Component
 
         fputcsv($handle, [
             'Transaction ID',
+            'Customer ID',
             'Customer',
             'Payment Method',
             'Reference Number',
@@ -1223,9 +1248,11 @@ new class extends Component
             fputcsv($handle, [
                 $transaction->id,
 
+                $transaction->id_number,
+
                 trim(
-                    $transaction->first_name .
-                    ' ' .
+                    $transaction->first_name.
+                    ' '.
                     $transaction->last_name
                 ),
 
@@ -1273,8 +1300,8 @@ new class extends Component
                 $transaction->status,
 
                 trim(
-                    ($transaction->employee_first_name ?? '') .
-                    ' ' .
+                    ($transaction->employee_first_name ?? '').
+                    ' '.
                     ($transaction->employee_last_name ?? '')
                 ),
 
@@ -1381,7 +1408,7 @@ new class extends Component
         foreach ($orders as $order) {
 
             fputcsv($handle, [
-                'PO-' . str_pad(
+                'PO-'.str_pad(
                     $order->id,
                     5,
                     '0',
@@ -1391,8 +1418,8 @@ new class extends Component
                 $order->product_names,
 
                 trim(
-                    $order->requester_first_name .
-                    ' ' .
+                    $order->requester_first_name.
+                    ' '.
                     $order->requester_last_name
                 ),
 
@@ -1521,17 +1548,17 @@ new class extends Component
         };
 
         $filename .= '-'
-            . $this->exportRange
-            . '-'
-            . now()->format('Y-m-d-His')
-            . '-'
-            . Str::lower(
+            .$this->exportRange
+            .'-'
+            .now()->format('Y-m-d-His')
+            .'-'
+            .Str::lower(
                 Str::random(8)
             )
-            . '.pdf';
+            .'.pdf';
 
         Storage::disk('local')->put(
-            'reports/' . $filename,
+            'reports/'.$filename,
             $pdfContent
         );
 
@@ -1633,16 +1660,16 @@ new class extends Component
 
             <body>
 
-                <h1>' . $title . '</h1>
+                <h1>'.$title.'</h1>
 
                 <div class="meta">
 
                     <p>
-                        Timeframe: ' . $range . '
+                        Timeframe: '.$range.'
                     </p>
 
                     <p>
-                        Generated: ' . $generatedAt . '
+                        Generated: '.$generatedAt.'
                     </p>
 
                 </div>
@@ -1656,24 +1683,23 @@ new class extends Component
         ) {
 
             $totalSales = $sales->sum(
-                fn ($transaction) =>
-                    (float) $transaction->total_amount
+                fn ($transaction) => (float) $transaction->total_amount
             );
 
             $html .= '
                 <h2>Sales</h2>
 
                 <div class="summary">
-                    Transactions: ' .
+                    Transactions: '.
                     number_format(
                         $sales->count()
-                    ) .
+                    ).
                     '&nbsp;&nbsp;&nbsp;
-                    Total Sales: PHP ' .
+                    Total Sales: PHP '.
                     number_format(
                         $totalSales,
                         2
-                    ) .
+                    ).
                 '</div>
 
                 <table>
@@ -1682,6 +1708,7 @@ new class extends Component
 
                         <tr>
                             <th>ID</th>
+                            <th>Customer ID</th>
                             <th>Customer</th>
                             <th>Payment</th>
                             <th>Reference</th>
@@ -1701,14 +1728,14 @@ new class extends Component
             foreach ($sales as $transaction) {
 
                 $customer = trim(
-                    $transaction->first_name .
-                    ' ' .
+                    $transaction->first_name.
+                    ' '.
                     $transaction->last_name
                 );
 
                 $employee = trim(
-                    ($transaction->employee_first_name ?? '') .
-                    ' ' .
+                    ($transaction->employee_first_name ?? '').
+                    ' '.
                     ($transaction->employee_last_name ?? '')
                 );
 
@@ -1722,70 +1749,76 @@ new class extends Component
                 $html .= '
                     <tr>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $transaction->id
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
+                            $this->pdfText(
+                                $transaction->id_number
+                            ).
+                        '</td>
+
+                        <td>'.
                             $this->pdfText(
                                 $customer
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $transaction->payment_method
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $transaction->reference_num
-                            ) .
+                            ).
                         '</td>
 
                         <td class="right">
-                            PHP ' .
+                            PHP '.
                             number_format(
                                 (float) $transaction->discount_price,
                                 2
-                            ) .
+                            ).
                         '</td>
 
                         <td class="right">
-                            PHP ' .
+                            PHP '.
                             number_format(
                                 (float) $transaction->tax,
                                 2
-                            ) .
+                            ).
                         '</td>
 
                         <td class="right">
-                            PHP ' .
+                            PHP '.
                             number_format(
                                 (float) $transaction->total_amount,
                                 2
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $transaction->status
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $employee
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $transactionDate
-                            ) .
+                            ).
                         '</td>
 
                     </tr>
@@ -1807,8 +1840,7 @@ new class extends Component
         ) {
 
             $inventoryValue = $inventory->sum(
-                fn ($product) =>
-                    (float) $product->quantity *
+                fn ($product) => (float) $product->quantity *
                     (float) $product->price
             );
 
@@ -1816,16 +1848,16 @@ new class extends Component
                 <h2>Inventory</h2>
 
                 <div class="summary">
-                    Products: ' .
+                    Products: '.
                     number_format(
                         $inventory->count()
-                    ) .
+                    ).
                     '&nbsp;&nbsp;&nbsp;
-                    Inventory Value: PHP ' .
+                    Inventory Value: PHP '.
                     number_format(
                         $inventoryValue,
                         2
-                    ) .
+                    ).
                 '</div>
 
                 <table>
@@ -1865,62 +1897,62 @@ new class extends Component
                 $html .= '
                     <tr>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $product->id
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $product->name
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $product->category_name
-                            ) .
+                            ).
                         '</td>
 
-                        <td class="right">' .
+                        <td class="right">'.
                             number_format(
                                 (int) $product->quantity
-                            ) .
+                            ).
                         '</td>
 
-                        <td class="right">' .
+                        <td class="right">'.
                             number_format(
                                 (int) $product->max
-                            ) .
+                            ).
                         '</td>
 
                         <td class="right">
-                            PHP ' .
+                            PHP '.
                             number_format(
                                 (float) $product->price,
                                 2
-                            ) .
+                            ).
                         '</td>
 
                         <td class="right">
-                            PHP ' .
+                            PHP '.
                             number_format(
                                 $productValue,
                                 2
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $product->status
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $productDate
-                            ) .
+                            ).
                         '</td>
 
                     </tr>
@@ -1946,24 +1978,23 @@ new class extends Component
 
             $totalPurchaseOrderAmount =
                 $purchaseOrders->sum(
-                    fn ($order) =>
-                        (float) $order->total_amount
+                    fn ($order) => (float) $order->total_amount
                 );
 
             $html .= '
                 <h2>Purchase Orders</h2>
 
                 <div class="summary">
-                    Purchase Orders: ' .
+                    Purchase Orders: '.
                     number_format(
                         $totalPurchaseOrders
-                    ) .
+                    ).
                     '&nbsp;&nbsp;&nbsp;
-                    Total Amount: PHP ' .
+                    Total Amount: PHP '.
                     number_format(
                         $totalPurchaseOrderAmount,
                         2
-                    ) .
+                    ).
                 '</div>
 
                 <table>
@@ -1988,8 +2019,8 @@ new class extends Component
             foreach ($purchaseOrders as $order) {
 
                 $requester = trim(
-                    $order->requester_first_name .
-                    ' ' .
+                    $order->requester_first_name.
+                    ' '.
                     $order->requester_last_name
                 );
 
@@ -2004,51 +2035,51 @@ new class extends Component
                     <tr>
 
                         <td>
-                            PO-' .
+                            PO-'.
                             str_pad(
                                 $order->id,
                                 5,
                                 '0',
                                 STR_PAD_LEFT
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $order->product_names
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $requester
-                            ) .
+                            ).
                         '</td>
 
-                        <td class="right">' .
+                        <td class="right">'.
                             number_format(
                                 (int) $order->quantity
-                            ) .
+                            ).
                         '</td>
 
                         <td class="right">
-                            PHP ' .
+                            PHP '.
                             number_format(
                                 (float) $order->total_amount,
                                 2
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $order->status
-                            ) .
+                            ).
                         '</td>
 
-                        <td>' .
+                        <td>'.
                             $this->pdfText(
                                 $orderDate
-                            ) .
+                            ).
                         '</td>
 
                     </tr>

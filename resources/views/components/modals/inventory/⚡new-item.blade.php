@@ -1,25 +1,36 @@
 <?php
 
-use Livewire\Component;
 use App\Models\ProductCategories;
 use App\Models\ProductItem;
 use Flux\Flux;
+use Livewire\Component;
 
 new class extends Component
 {
     public $productCategories = [];
+
     public $name;
+
     public $category;
+
     public $price;
+
     public $quantity;
+
     public $max;
+
     public $reorderLevel;
+
     public $frontQuantity;
+
     public $warehouseQuantity;
+
     public $status;
+
     public $newCategoryName = '';
-    
-    public function mount() {
+
+    public function mount()
+    {
         $this->refreshCategories();
         $this->status = 'available';
         $this->price = 0;
@@ -30,7 +41,8 @@ new class extends Component
         $this->warehouseQuantity = 0;
     }
 
-    public function refreshCategories() {
+    public function refreshCategories()
+    {
         $this->productCategories = ProductCategories::orderBy('name')->get();
 
         if (blank($this->category) || ! $this->productCategories->contains('id', $this->category)) {
@@ -38,7 +50,8 @@ new class extends Component
         }
     }
 
-    public function onSaveProduct() {
+    public function onSaveProduct()
+    {
         $this->validate([
             'name' => 'required',
             'category' => 'required',
@@ -73,18 +86,14 @@ new class extends Component
         $this->onClose();
     }
 
-    public function onCategorySelected($value) {
-        if ($value === 'new-category') {
-            $this->newCategoryName = '';
-            Flux::modal('new-category')->show();
-
-            return;
-        }
-
-        $this->category = $value;
+    public function openNewCategoryModal()
+    {
+        $this->newCategoryName = '';
+        Flux::modal('new-category')->show();
     }
 
-    public function onCreateCategory() {
+    public function onCreateCategory()
+    {
         $this->validate([
             'newCategoryName' => ['required', 'string', 'min:2'],
         ]);
@@ -99,16 +108,19 @@ new class extends Component
         Flux::modal('new-category')->close();
     }
 
-    public function closeNewCategoryModal() {
+    public function closeNewCategoryModal()
+    {
         $this->newCategoryName = '';
         Flux::modal('new-category')->close();
     }
 
-    public function onClose() {
+    public function onClose()
+    {
         Flux::modal('new-item')->close();
     }
 
-    public function onReset() {
+    public function onReset()
+    {
         $this->name = '';
         $this->category = $this->productCategories->first()?->id;
         $this->price = 0;
@@ -133,18 +145,20 @@ new class extends Component
                 <flux:input wire:model='name' label="Name" />
 
                 <div class="grid grid-cols-2 gap-4">
-                    <flux:select
-                        wire:model='category'
-                        label="Category"
-                        placeholder="Select Category"
-                        x-on:change="$event.target.value === 'new-category' ? $wire.onCategorySelected('new-category') : null"
-                    >
-                        @foreach ($productCategories as $category)
-                            <flux:select.option value="{{ $category->id }}">{{ $category->name }}</flux:select.option>
-                        @endforeach
+                    <div class="flex items-end gap-2">
+                        <flux:select
+                            wire:model='category'
+                            label="Category"
+                            placeholder="Select Category"
+                            class="min-w-0 flex-1"
+                        >
+                            @foreach ($productCategories as $category)
+                                <flux:select.option value="{{ $category->id }}">{{ $category->name }}</flux:select.option>
+                            @endforeach
+                        </flux:select>
 
-                        <flux:select.option value="new-category">+ Add new category</flux:select.option>
-                    </flux:select>
+                        <flux:button wire:click='openNewCategoryModal' variant="outline" size="sm">Add category</flux:button>
+                    </div>
 
                     <flux:input wire:model='quantity' type="number" label="Quantity" />
                     <flux:input wire:model='price' type="number" min="0" step="0.01" label="Price" />
