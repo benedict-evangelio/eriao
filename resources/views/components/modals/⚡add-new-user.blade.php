@@ -34,6 +34,7 @@ new class extends Component
 
          $this->dispatch('onRefreshUsers');
          $this->onClose();
+         Flux::toast(variant: 'success', text: 'User created.');
     }
 
     public function onClose() {

@@ -3,6 +3,7 @@
 use App\Models\Transactions;
 use App\Models\ProductItem;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Flux\Flux;
 use Livewire\Attributes\Computed;
@@ -16,6 +17,12 @@ new class extends Component
     public string $sortBy = 'created_at';
     public string $sortDirection = 'desc';
 
+    public string $dateFrom = '';
+
+    public string $dateTo = '';
+
+    public string $statusFilter = 'all';
+
     public ?int $selectedTransactionId = null;
 
     public string $editIdNumber = '';
@@ -23,6 +30,8 @@ new class extends Component
     public array $editItems = [];
 
     public float $originalTransactionTotal = 0;
+
+    public float $currentTransactionTotal = 0;
 
     public float $originalDiscountAmount = 0;
 
@@ -67,8 +76,100 @@ new class extends Component
                 'users.first_name as cashier_first_name',
                 'users.last_name as cashier_last_name',
             ])
+            ->when($this->statusFilter !== 'all', fn ($query) => $query->where('transactions.status', $this->statusFilter))
+            ->when($this->dateFrom !== '', fn ($query) => $query->whereDate('transactions.created_at', '>=', $this->dateFrom))
+            ->when($this->dateTo !== '' && $this->dateTo >= $this->dateFrom, fn ($query) => $query->whereDate('transactions.created_at', '<=', $this->dateTo))
+            ->when($this->dateTo !== '' && $this->dateFrom !== '' && $this->dateTo < $this->dateFrom, fn ($query) => $query->whereRaw('1 = 0'))
             ->orderBy(self::SORTABLE[$this->sortBy], $this->sortDirection)
             ->paginate(5);
+    }
+
+    public function updatedDateFrom(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatedDateTo(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatedStatusFilter(): void
+    {
+        $this->resetPage();
+    }
+
+    #[Computed]
+    public function selectedTransactionDetails(): ?Transactions
+    {
+        return $this->selectedTransactionId
+            ? Transactions::query()->find($this->selectedTransactionId)
+            : null;
+    }
+
+    #[Computed]
+    public function selectedTransactionItems()
+    {
+        if (! $this->selectedTransactionId) {
+            return collect();
+        }
+
+        return DB::table('orders')
+            ->leftJoin('product_items', 'product_items.id', '=', 'orders.product_id')
+            ->where('orders.transaction_id', $this->selectedTransactionId)
+            ->select([
+                'orders.product_id',
+                'product_items.name',
+                DB::raw('COUNT(*) as quantity'),
+            ])
+            ->groupBy('orders.product_id', 'product_items.name')
+            ->orderBy('product_items.name')
+            ->get();
+    }
+
+    #[Computed]
+    public function selectedTransactionAdjustments()
+    {
+        if (! $this->selectedTransactionId) {
+            return collect();
+        }
+
+        if (! Schema::hasTable('transaction_adjustments')) {
+            return collect();
+        }
+
+        return DB::table('transaction_adjustments')
+            ->leftJoin('users', 'users.id', '=', 'transaction_adjustments.user_id')
+            ->where('transaction_adjustments.transaction_id', $this->selectedTransactionId)
+            ->select([
+                'transaction_adjustments.*',
+                'users.first_name',
+                'users.last_name',
+            ])
+            ->latest('transaction_adjustments.created_at')
+            ->get();
+    }
+
+    public function viewTransaction(int $id): void
+    {
+        $this->selectedTransactionId = $id;
+        unset(
+            $this->selectedTransactionDetails,
+            $this->selectedTransactionItems,
+            $this->selectedTransactionAdjustments
+        );
+        Flux::modal('view-transaction')->show();
+    }
+
+    public function closeTransactionDetails(): void
+    {
+        Flux::modal('view-transaction')->close();
+        $this->selectedTransactionId = null;
+        unset(
+            $this->selectedTransactionDetails,
+            $this->selectedTransactionItems,
+            $this->selectedTransactionAdjustments
+        );
     }
 
     public function statusColor(?string $status): string
@@ -102,6 +203,7 @@ new class extends Component
         $this->selectedTransactionId = $transaction->id;
         $this->editIdNumber = (string) $transaction->id_number;
         $this->originalTransactionTotal = (float) $transaction->total_amount;
+        $this->currentTransactionTotal = (float) ($transaction->adjusted_total_amount ?? $transaction->total_amount);
         $this->originalDiscountAmount = (float) $transaction->discount_price;
         $this->originalTaxAmount = (float) $transaction->tax;
         $this->availableProducts = ProductItem::query()
@@ -178,6 +280,15 @@ new class extends Component
 
     public function savePendingTransaction(): void
     {
+        if (
+            ! Schema::hasColumn('transactions', 'adjusted_total_amount')
+            || ! Schema::hasTable('transaction_adjustments')
+        ) {
+            throw ValidationException::withMessages([
+                'editItems' => 'Transaction adjustment storage is not installed. Run the outstanding database migrations before saving item changes.',
+            ]);
+        }
+
         $this->validate([
             'editIdNumber' => ['required', 'string', 'max:255'],
             'editItems' => ['required', 'array', 'min:1'],
@@ -219,6 +330,25 @@ new class extends Component
 
             $updatedDiscount = min((float) $original->discount_price, $total);
             $updatedTotal = max(0, $total - $updatedDiscount + (float) $original->tax);
+            $previousAmount = (float) ($original->adjusted_total_amount ?? $original->total_amount);
+            $previousItems = DB::table('orders')
+                ->where('transaction_id', $transaction->id)
+                ->select('product_id', DB::raw('COUNT(*) as quantity'))
+                ->groupBy('product_id')
+                ->get()
+                ->map(fn ($item) => [
+                    'product_id' => (int) $item->product_id,
+                    'quantity' => (int) $item->quantity,
+                ])
+                ->all();
+            $adjustedItems = collect($this->editItems)
+                ->groupBy('product_id')
+                ->map(fn ($items, $productId) => [
+                    'product_id' => (int) $productId,
+                    'quantity' => $items->sum(fn ($item) => (int) $item['quantity']),
+                ])
+                ->values()
+                ->all();
 
             DB::table('orders')->where('transaction_id', $transaction->id)->delete();
 
@@ -235,14 +365,27 @@ new class extends Component
 
             $transaction->update([
                 'id_number' => trim($this->editIdNumber),
-                'discount_price' => round($updatedDiscount, 2),
-                'total_amount' => round($updatedTotal, 2),
+                'adjusted_total_amount' => round($updatedTotal, 2),
+            ]);
+
+            DB::table('transaction_adjustments')->insert([
+                'transaction_id' => $transaction->id,
+                'user_id' => auth()->id(),
+                'previous_amount' => round($previousAmount, 2),
+                'adjusted_amount' => round($updatedTotal, 2),
+                'refund_amount' => round(max(0, $previousAmount - $updatedTotal), 2),
+                'previous_items' => json_encode($previousItems, JSON_THROW_ON_ERROR),
+                'adjusted_items' => json_encode($adjustedItems, JSON_THROW_ON_ERROR),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         });
 
+        Flux::modal('view-transaction')->close();
         Flux::modal('edit-pending-transaction')->close();
         $this->resetTransactionForm();
-        unset($this->orders);
+        unset($this->orders, $this->selectedTransactionDetails, $this->selectedTransactionItems, $this->selectedTransactionAdjustments);
+        Flux::toast(variant: 'success', text: 'Transaction items updated and refund adjustment recorded.');
     }
 
     public function finalizeTransaction(): void
@@ -310,6 +453,7 @@ new class extends Component
         Flux::modal('finalize-transaction')->close();
         $this->resetTransactionForm();
         unset($this->orders);
+        Flux::toast(variant: 'success', text: 'Transaction payment completed.');
     }
 
     public function openFinalizeTransaction(int $id): void
@@ -332,11 +476,24 @@ new class extends Component
         $this->editIdNumber = '';
         $this->editItems = [];
         $this->originalTransactionTotal = 0;
+        $this->currentTransactionTotal = 0;
         $this->originalDiscountAmount = 0;
         $this->originalTaxAmount = 0;
         $this->paymentMethod = 'Cash';
         $this->referenceNumber = '';
         $this->availableProducts = [];
+    }
+
+    public function startTransactionAdjustment(int $id): void
+    {
+        Flux::modal('view-transaction')->close();
+        $this->editPendingTransaction($id);
+    }
+
+    public function startTransactionFinalization(int $id): void
+    {
+        Flux::modal('view-transaction')->close();
+        $this->openFinalizeTransaction($id);
     }
 };
 ?>
@@ -347,6 +504,32 @@ new class extends Component
         <p class="text-xl font-bold">Transactions</p>
         <p>Review and end student purchases</p>
     </div>
+
+    <div class="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
+        <flux:field>
+            <flux:label>From date</flux:label>
+            <flux:input wire:model.live="dateFrom" type="date" />
+        </flux:field>
+        <flux:field>
+            <flux:label>To date</flux:label>
+            <flux:input wire:model.live="dateTo" type="date" />
+        </flux:field>
+        <flux:field>
+            <flux:label>Status</flux:label>
+            <flux:select wire:model.live="statusFilter">
+                <flux:select.option value="all">All statuses</flux:select.option>
+                <flux:select.option value="pending">Pending</flux:select.option>
+                <flux:select.option value="paid">Paid</flux:select.option>
+                <flux:select.option value="completed">Completed</flux:select.option>
+                <flux:select.option value="refunded">Refunded</flux:select.option>
+                <flux:select.option value="void">Void</flux:select.option>
+            </flux:select>
+        </flux:field>
+    </div>
+
+    @if ($dateFrom !== '' && $dateTo !== '' && $dateTo < $dateFrom)
+        <flux:callout variant="warning">The end date must be on or after the start date.</flux:callout>
+    @endif
 
     <flux:table :paginate="$this->orders">
         <flux:table.columns>
@@ -391,38 +574,32 @@ new class extends Component
 
                     <flux:table.cell variant="strong" class="whitespace-nowrap">
                         PHP {{ number_format($order->total_amount, 2) }}
+                        @if ($order->adjusted_total_amount !== null)
+                            <span class="mt-1 block text-xs font-normal text-zinc-500">
+                                Payable: PHP {{ number_format($order->adjusted_total_amount, 2) }}
+                            </span>
+                        @endif
                     </flux:table.cell>
 
                     <flux:table.cell class="whitespace-nowrap">
-                        @if ($order->status === 'pending')
-                            <flux:dropdown position="bottom" align="end">
-                                <flux:button
-                                    icon="ellipsis-horizontal"
-                                    variant="ghost"
-                                    size="sm"
-                                    square
-                                    aria-label="Transaction actions"
-                                />
+                        <flux:dropdown position="bottom" align="end">
+                            <flux:button
+                                icon="ellipsis-horizontal"
+                                variant="ghost"
+                                size="sm"
+                                square
+                                aria-label="Transaction actions"
+                            />
 
-                                <flux:menu>
-                                    <flux:menu.item
-                                        wire:click="editPendingTransaction({{ $order->id }})"
-                                        icon="arrow-path"
-                                    >
-                                        Refund / replace items
-                                    </flux:menu.item>
-
-                                    @if (in_array(auth()->user()->role, ['admin', 'cashier'], true))
-                                        <flux:menu.item
-                                            wire:click="openFinalizeTransaction({{ $order->id }})"
-                                            icon="check"
-                                        >
-                                            Complete transaction
-                                        </flux:menu.item>
-                                    @endif
-                                </flux:menu>
-                            </flux:dropdown>
-                        @endif
+                            <flux:menu>
+                                <flux:menu.item
+                                    wire:click="viewTransaction({{ $order->id }})"
+                                    icon="eye"
+                                >
+                                    View transaction
+                                </flux:menu.item>
+                            </flux:menu>
+                        </flux:dropdown>
                     </flux:table.cell>
                 </flux:table.row>
             @empty
@@ -435,6 +612,80 @@ new class extends Component
         </flux:table.rows>
     </flux:table>
 </div>
+
+<flux:modal name="view-transaction" class="max-w-2xl w-full">
+    @if ($transaction = $this->selectedTransactionDetails)
+        <div class="flex max-h-[85vh] flex-col gap-5 overflow-y-auto pr-1">
+            <div class="flex items-start justify-between gap-4 pr-10">
+                <div>
+                    <p class="text-lg font-semibold">Transaction #{{ $transaction->id }}</p>
+                    <p class="text-sm text-zinc-500">Student ID: {{ $transaction->id_number ?: '—' }}</p>
+                </div>
+                <flux:badge size="sm" :color="$this->statusColor($transaction->status)">{{ ucwords($transaction->status) }}</flux:badge>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 rounded-lg border border-zinc-200 p-4 text-sm dark:border-zinc-700">
+                <div>
+                    <p class="text-zinc-500">Original transaction total</p>
+                    <p class="mt-1 font-semibold">₱{{ number_format($transaction->total_amount, 2) }}</p>
+                </div>
+                <div>
+                    <p class="text-zinc-500">{{ $transaction->status === 'pending' ? 'Current payable amount' : 'Recorded payment' }}</p>
+                    <p class="mt-1 font-semibold">₱{{ number_format($transaction->adjusted_total_amount ?? $transaction->total_amount, 2) }}</p>
+                </div>
+                <div>
+                    <p class="text-zinc-500">Payment method</p>
+                    <p class="mt-1 font-medium">{{ $transaction->payment_method ?: '—' }}</p>
+                </div>
+                <div>
+                    <p class="text-zinc-500">Date</p>
+                    <p class="mt-1 font-medium">{{ $transaction->created_at?->format('M d, Y h:i A') }}</p>
+                </div>
+            </div>
+
+            <section>
+                <h3 class="text-sm font-semibold">Items</h3>
+                <div class="mt-2 divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-700 dark:border-zinc-700">
+                    @forelse ($this->selectedTransactionItems as $item)
+                        <div class="flex items-center justify-between gap-4 px-4 py-3 text-sm">
+                            <span>{{ $item->name ?? 'Deleted product #'.$item->product_id }}</span>
+                            <span class="font-medium">× {{ $item->quantity }}</span>
+                        </div>
+                    @empty
+                        <p class="px-4 py-5 text-sm text-zinc-500">No items linked to this transaction.</p>
+                    @endforelse
+                </div>
+            </section>
+
+            @if ($this->selectedTransactionAdjustments->isNotEmpty())
+                <section>
+                    <h3 class="text-sm font-semibold">Replacement and refund log</h3>
+                    <div class="mt-2 divide-y divide-zinc-200 rounded-lg border border-zinc-200 dark:divide-zinc-700 dark:border-zinc-700">
+                        @foreach ($this->selectedTransactionAdjustments as $adjustment)
+                            <div class="px-4 py-3 text-sm">
+                                <div class="flex justify-between gap-3">
+                                    <span>₱{{ number_format($adjustment->previous_amount, 2) }} → ₱{{ number_format($adjustment->adjusted_amount, 2) }}</span>
+                                    <time class="text-xs text-zinc-500">{{ \Illuminate\Support\Carbon::parse($adjustment->created_at)->format('M d, Y h:i A') }}</time>
+                                </div>
+                                <p class="mt-1 text-zinc-500">Refund adjustment: ₱{{ number_format($adjustment->refund_amount, 2) }} · {{ trim(($adjustment->first_name ?? '').' '.($adjustment->last_name ?? '')) ?: 'Unknown user' }}</p>
+                            </div>
+                        @endforeach
+                    </div>
+                </section>
+            @endif
+
+            <div class="flex flex-wrap justify-end gap-2">
+                @if ($transaction->status === 'pending')
+                    <flux:button variant="outline" icon="arrow-path" wire:click="startTransactionAdjustment({{ $transaction->id }})">Refund / replace items</flux:button>
+                    @if (in_array(auth()->user()->role, ['admin', 'cashier'], true))
+                        <flux:button variant="primary" icon="check" wire:click="startTransactionFinalization({{ $transaction->id }})">Complete transaction</flux:button>
+                    @endif
+                @endif
+                <flux:button variant="ghost" wire:click="closeTransactionDetails">Close</flux:button>
+            </div>
+        </div>
+    @endif
+</flux:modal>
 
 <flux:modal name="edit-pending-transaction" class="max-w-xl w-full">
     @php($replacementTotals = $this->replacementTotals())
@@ -473,6 +724,10 @@ new class extends Component
                 <span class="font-medium">₱{{ number_format($originalTransactionTotal, 2) }}</span>
             </div>
             <div class="mt-2 flex justify-between gap-4 text-sm">
+                <span class="text-zinc-500">Current payable amount</span>
+                <span class="font-medium">₱{{ number_format($currentTransactionTotal, 2) }}</span>
+            </div>
+            <div class="mt-2 flex justify-between gap-4 text-sm">
                 <span class="text-zinc-500">Replacement items total</span>
                 <span class="font-medium">₱{{ number_format($replacementTotals['replacement_items_total'], 2) }} / ₱{{ number_format($replacementTotals['item_allowance'], 2) }} allowed</span>
             </div>
@@ -481,7 +736,7 @@ new class extends Component
                 <span class="font-medium">₱{{ number_format($replacementTotals['projected_total'], 2) }}</span>
             </div>
             <div class="mt-2 flex justify-between gap-4 border-t border-zinc-200 pt-3 dark:border-zinc-700">
-                <span class="font-semibold">Estimated refund</span>
+                <span class="font-semibold">Estimated adjustment / refund</span>
                 <span class="font-bold">₱{{ number_format($replacementTotals['estimated_refund'], 2) }}</span>
             </div>
             @if ($replacementTotals['exceeds_allowance'])

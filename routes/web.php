@@ -1,7 +1,7 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Agents\GabAI;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 
 // Route::view('/', 'welcome')->name('home');
@@ -9,7 +9,18 @@ Route::view('/sign-in', 'authentication.sign-in')->name('sign-in');
 Route::view('/sign-up', 'authentication.sign-up')->name('sign-up');
 Route::redirect('/login', '/sign-in');
 Route::redirect('/register', '/sign-up');
-Route::redirect('/', '/sign-in');
+Route::redirect('/', '/sign-in')->name('home');
+
+Route::get('/dashboard', function () {
+    $dashboardRoute = match (request()->user()->role) {
+        'admin' => 'admin.dashboard',
+        'cashier' => 'cashier.dashboard',
+        'employee' => 'employee.dashboard',
+        'staff' => 'staff.dashboard',
+    };
+
+    return redirect()->route($dashboardRoute);
+})->middleware('auth')->name('dashboard');
 
 Route::middleware('auth')->group(function () {
     Route::post(
@@ -27,12 +38,12 @@ Route::get('/reports/download/{filename}', function (string $filename) {
     $filename = basename($filename);
 
     abort_unless(
-        preg_match('/^[A-Za-z0-9._-]+\.pdf$/', $filename),
+        preg_match('/^[A-Za-z0-9._-]+\.pdf$/', $filename) === 1,
         404
     );
 
     $path = Storage::disk('local')->path(
-        'reports/' . $filename
+        'reports/'.$filename
     );
 
     abort_unless(
@@ -50,8 +61,8 @@ Route::get('/reports/download/{filename}', function (string $filename) {
         )
         ->deleteFileAfterSend(true);
 })
-->middleware('auth')
-->name('reports.download');
+    ->middleware('auth')
+    ->name('reports.download');
 
 Route::middleware(['auth', 'verified', 'role:employee'])->group(function () {
     Route::livewire('/employee/dashboard', 'pages::user.home')->name('employee.dashboard');

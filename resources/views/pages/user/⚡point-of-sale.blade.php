@@ -55,7 +55,6 @@ new class extends Component
             'id_number' => ['required', 'string', 'max:255'],
             'discount_category' => ['nullable', 'string', 'max:255'],
             'discount_price' => ['required', 'numeric', 'min:0'],
-            'tax' => ['required', 'numeric', 'min:0'],
             'total_amount' => ['required', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string'],
             'items' => ['required', 'array', 'min:1'],
@@ -111,7 +110,7 @@ new class extends Component
                 'reference_num' => null,
                 'discount_category' => $validated['discount_category'] ?: null,
                 'discount_price' => round((float) $validated['discount_price'], 2),
-                'tax' => round((float) $validated['tax'], 2),
+                'tax' => 0,
                 'total_amount' => $total,
                 'cash' => 0,
                 'change' => 0,
@@ -173,7 +172,6 @@ new class extends Component
         discount_category: '',
         discount_value: 0,
         discount_type: 'fixed',
-        tax: 0,
         notes: '',
         processing: false,
 
@@ -213,21 +211,10 @@ new class extends Component
             return Math.min(this.subtotal, value);
         },
 
-        get taxAmount() {
-            const value = Number(this.tax) || 0;
-
-            return Math.max(
-                0,
-                (this.subtotal - this.discountAmount) * (value / 100)
-            );
-        },
-
         get total() {
             return Math.max(
                 0,
-                this.subtotal -
-                    this.discountAmount +
-                    this.taxAmount
+                this.subtotal - this.discountAmount
             );
         },
 
@@ -309,7 +296,6 @@ new class extends Component
             this.discount_category = '';
             this.discount_value = 0;
             this.discount_type = 'fixed';
-            this.tax = 0;
         },
 
         async processCheckout() {
@@ -341,9 +327,6 @@ new class extends Component
                 discount_price: Number(
                     this.discountAmount.toFixed(2)
                 ),
-                tax: Number(
-                    this.taxAmount.toFixed(2)
-                ),
                 total_amount: Number(
                     this.total.toFixed(2)
                 ),
@@ -371,6 +354,7 @@ new class extends Component
             this.$wire.on(
                 'pos-slip-created',
                 () => {
+                    this.$flux.modal('checkout').close();
                     this.clearCart();
                     this.resetCustomer();
                     this.resetPayment();
@@ -390,7 +374,7 @@ new class extends Component
     }"
     x-on:pos-success.window="
         $flux.toast({
-            heading: 'Transaction completed',
+            heading: 'Payment slip created',
             text: $event.detail.message,
             variant: 'success'
         })
@@ -715,18 +699,6 @@ new class extends Component
                         </span>
                     </div>
 
-                    <div class="flex justify-between text-sm">
-                        <span class="text-zinc-500">
-                            Tax
-                        </span>
-
-                        <span class="font-medium">
-                            ₱<span
-                                x-text="Number(taxAmount).toFixed(2)"
-                            ></span>
-                        </span>
-                    </div>
-
                     <div class="flex items-center justify-between pt-3 border-t border-zinc-200">
                         <span class="font-semibold">
                             Total
@@ -791,7 +763,7 @@ new class extends Component
                             </p>
 
                             <p class="text-xs text-zinc-500">
-                                Configure optional discount and tax for this slip.
+                                Configure an optional discount for this slip.
                             </p>
                         </div>
 
@@ -800,7 +772,7 @@ new class extends Component
                         </x-wirekit::badge>
                     </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                         <flux:field>
                             <flux:label>
                                 Category
@@ -869,16 +841,6 @@ new class extends Component
                             />
                         </flux:field>
 
-                        <flux:field>
-                            <flux:label>Tax Percentage</flux:label>
-                            <flux:input
-                                type="number"
-                                min="0"
-                                max="100"
-                                step="0.01"
-                                x-model.number="tax"
-                            />
-                        </flux:field>
                     </div>
                 </div>
 
@@ -916,18 +878,6 @@ new class extends Component
                             <span class="text-green-600">
                                 −₱<span
                                     x-text="Number(discountAmount).toFixed(2)"
-                                ></span>
-                            </span>
-                        </div>
-
-                        <div class="flex justify-between text-sm">
-                            <span class="text-zinc-500">
-                                Tax
-                            </span>
-
-                            <span>
-                                ₱<span
-                                    x-text="Number(taxAmount).toFixed(2)"
                                 ></span>
                             </span>
                         </div>

@@ -1,6 +1,8 @@
 <?php
 
 use Livewire\Component;
+use Laravel\Fortify\Actions\RedirectIfTwoFactorAuthenticatable;
+use Symfony\Component\HttpFoundation\RedirectResponse;
 
 new class extends Component
 {
@@ -13,26 +15,62 @@ new class extends Component
             'password' => 'required',
         ]);
 
-        if(Auth::attempt(['email' => $this->emailAddress, 'password' => $this->password])) {
-            if(Auth::user()->status == 'active') {
-                if(Auth::user()->role == 'admin') {
-                    $this->redirect('/admin/dashboard');
-                } else if(Auth::user()->role == 'employee') {
-                    $this->redirect('/employee/dashboard');
-                } else if(Auth::user()->role == 'cashier') {
-                    $this->redirect('/cashier/dashboard');
-                } else if(Auth::user()->role == 'staff') {
-                    $this->redirect('/staff/dashboard');
-                }
-            } else {
+        $credentials = [
+            'email' => $this->emailAddress,
+            'password' => $this->password,
+        ];
+
+        if (! Auth::validate($credentials)) {
+            $this->addError('password', 'Incorrect email address or password.');
+
+            return;
+        }
+
+        $request = request();
+        $request->setLaravelSession(session()->driver());
+        $request->merge($credentials);
+
+        $challengeResponse = app(RedirectIfTwoFactorAuthenticatable::class)->handle(
+            $request,
+            fn () => null,
+        );
+
+        if ($challengeResponse instanceof RedirectResponse) {
+            $this->redirect(route('two-factor.login'));
+
+            return;
+        }
+
+        if (Auth::attempt($credentials)) {
+            $user = Auth::user();
+
+            if ($user->status !== 'active') {
+                Auth::logout();
                 $this->dispatch('wirekit-toast',
                     variant: 'danger',
                     title: 'Account is Not Activated',
                     message: 'Please contact your system administrator to activate your account.',
                 );
+
+                return;
             }
-        } else {
-            $this->addError('password', 'Incorrect email address or password.');
+
+            $dashboard = match ($user->role) {
+                'admin' => '/admin/dashboard',
+                'employee' => '/employee/dashboard',
+                'cashier' => '/cashier/dashboard',
+                'staff' => '/staff/dashboard',
+                default => null,
+            };
+
+            if ($dashboard === null) {
+                Auth::logout();
+                $this->addError('emailAddress', 'This account cannot sign in.');
+
+                return;
+            }
+
+            $this->redirect($dashboard);
         }
     }
 };

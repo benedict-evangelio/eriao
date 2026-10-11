@@ -1,6 +1,7 @@
 <?php
 
 use Livewire\Component;
+use App\Enums\CollegeRequestStatus;
 use Illuminate\Support\Facades\DB;
 
 new class extends Component
@@ -115,6 +116,13 @@ new class extends Component
                     'product_items.status',
                     'product_categories.name as category_name',
                 ])
+                ->addSelect([
+                    'reserved_warehouse_quantity' => DB::table('college_request_items')
+                        ->selectRaw('COALESCE(SUM(college_request_items.quantity), 0)')
+                        ->join('college_requests', 'college_requests.id', '=', 'college_request_items.college_request_id')
+                        ->whereColumn('college_request_items.product_id', 'product_items.id')
+                        ->where('college_requests.status', CollegeRequestStatus::Signed->value),
+                ])
                 ->get();
 
         if ($products->isEmpty()) {
@@ -171,7 +179,9 @@ new class extends Component
                         $currentStock =
                             max(
                                 0,
-                                (int) $product->front_quantity + (int) $product->warehouse_quantity
+                                (int) $product->front_quantity
+                                    + (int) $product->warehouse_quantity
+                                    - (int) $product->reserved_warehouse_quantity
                             );
 
                         $maximumStock =
@@ -179,10 +189,17 @@ new class extends Component
                                 0,
                                 (int) $product->max
                             );
+                        $reorderLevel =
+                            max(
+                                0,
+                                (int) $product->reorder_level
+                            );
 
-                        if (
-                            $maximumStock <= 0
-                        ) {
+                        $restockTarget = $maximumStock > 0
+                            ? $maximumStock
+                            : max(1, $reorderLevel * 2);
+
+                        if ($restockTarget <= 0) {
                             return null;
                         }
 
@@ -199,17 +216,14 @@ new class extends Component
                                 1
                             );
 
-                        $stockPercentage =
-                            (
-                                $currentStock /
-                                $maximumStock
-                            ) *
-                            100;
+                        $stockPercentage = $maximumStock > 0
+                            ? ($currentStock / $maximumStock) * 100
+                            : ($currentStock <= $reorderLevel ? 0 : 100);
 
                         $restockQuantity =
                             max(
                                 0,
-                                $maximumStock -
+                                $restockTarget -
                                 $currentStock
                             );
 
@@ -292,6 +306,15 @@ new class extends Component
 
                             $intent =
                                 'danger';
+                        } elseif ($currentStock <= $reorderLevel) {
+                            $reason =
+                                'Stock has reached its configured re-order level.';
+
+                            $priority =
+                                'High';
+
+                            $intent =
+                                'warning';
                         } elseif (
                             $stockPercentage <= 20
                         ) {
@@ -376,39 +399,42 @@ new class extends Component
 };
 ?>
 
-<div class="flex flex-col gap-8 h-[calc(100vh-8rem)] min-h-0 overflow-hidden">
+<div wire:poll.60s="loadData" class="flex flex-col gap-8 h-[calc(100vh-8rem)] min-h-0 overflow-hidden">
     <div class="shrink-0">
         <x-wirekit::stats
             cols="4"
-            stagger
         >
-            <x-wirekit::stat
-                animateIn="slide-up"
-                animate
-                label="Total Products"
-                value="{{ number_format($totalProducts) }}"
-            />
+            <a href="{{ route(auth()->user()->role.'.inventory') }}" class="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-label="Total Products, open inventory">
+                <x-wirekit::stat
+                    label="Total Products"
+                    value="{{ number_format($totalProducts) }}"
+                    class="h-full cursor-pointer transition-shadow hover:shadow-md"
+                />
+            </a>
 
-            <x-wirekit::stat
-                animateIn="slide-up"
-                animate
-                label="Current Stock"
-                value="{{ number_format($totalStock) }}"
-            />
+            <a href="{{ route(auth()->user()->role.'.inventory') }}" class="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-label="Current Stock, open inventory">
+                <x-wirekit::stat
+                    label="Current Stock"
+                    value="{{ number_format($totalStock) }}"
+                    class="h-full cursor-pointer transition-shadow hover:shadow-md"
+                />
+            </a>
 
-            <x-wirekit::stat
-                animateIn="slide-up"
-                animate
-                label="Inventory Value"
-                value="₱{{ number_format($inventoryValue, 2) }}"
-            />
+            <a href="{{ route(auth()->user()->role.'.inventory') }}" class="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-label="Inventory Value, open inventory">
+                <x-wirekit::stat
+                    label="Inventory Value"
+                    value="₱{{ number_format($inventoryValue, 2) }}"
+                    class="h-full cursor-pointer transition-shadow hover:shadow-md"
+                />
+            </a>
 
-            <x-wirekit::stat
-                animateIn="slide-up"
-                animate
-                label="Restock Needed"
-                value="{{ number_format($restockNeeded) }}"
-            />
+            <a href="{{ route(auth()->user()->role.'.inventory') }}" class="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary" aria-label="Restock Needed, open inventory">
+                <x-wirekit::stat
+                    label="Restock Needed"
+                    value="{{ number_format($restockNeeded) }}"
+                    class="h-full cursor-pointer transition-shadow hover:shadow-md"
+                />
+            </a>
         </x-wirekit::stats>
     </div>
 
@@ -442,6 +468,15 @@ new class extends Component
                         Products that may need replenishment
                     </p>
                 </div>
+
+                <flux:button
+                    size="sm"
+                    variant="outline"
+                    icon="arrow-path"
+                    wire:click="loadData"
+                >
+                    Refresh
+                </flux:button>
 
                 @if ($restockNeeded > 0)
                     <x-wirekit::badge intent="accent">

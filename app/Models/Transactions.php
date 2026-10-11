@@ -6,7 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class Transactions extends Model
 {
-    protected $table = "transactions";
+    protected $table = 'transactions';
+
     protected $fillable = [
         'employee_id',
         'id_number',
@@ -19,6 +20,7 @@ class Transactions extends Model
         'discount_price',
         'tax',
         'total_amount',
+        'adjusted_total_amount',
         'cash',
         'change',
         'notes',

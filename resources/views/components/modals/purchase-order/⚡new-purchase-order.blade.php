@@ -191,6 +191,7 @@ new class extends Component
         $this->onReset();
 
         Flux::modal('new-purchase-order')->close();
+        Flux::toast(variant: 'success', text: 'Purchase order created.');
     }
 
     public function onReset(): void

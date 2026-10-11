@@ -2,6 +2,7 @@
 
 use App\Concerns\PasswordValidationRules;
 use App\Livewire\Actions\Logout;
+use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
@@ -21,6 +22,7 @@ new class extends Component {
 
         tap(Auth::user(), $logout(...))->delete();
 
+        Flux::toast(variant: 'success', text: __('Account deleted.'));
         $this->redirect('/', navigate: true);
     }
 }; ?>

@@ -4,6 +4,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Flux\Flux;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Livewire\Component;
@@ -109,7 +110,11 @@ new class extends Component
             $transactionQuery->whereBetween('created_at', [$from, $to]);
         }
 
-        $this->totalSales = (float) $salesQuery->sum('total_amount');
+        $payableAmount = Schema::hasColumn('transactions', 'adjusted_total_amount')
+            ? DB::raw('COALESCE(adjusted_total_amount, total_amount)')
+            : 'total_amount';
+
+        $this->totalSales = (float) $salesQuery->sum($payableAmount);
         $this->totalTransactions = $transactionQuery->count();
 
         $this->totalProducts = DB::table('product_items')->count();
@@ -153,7 +158,7 @@ new class extends Component
             $previousTransactionQuery->whereBetween('created_at', [$previousFrom, $previousTo]);
         }
 
-        $previousSales = (float) $previousSalesQuery->sum('total_amount');
+        $previousSales = (float) $previousSalesQuery->sum($payableAmount);
         $previousTransactions = $previousTransactionQuery->count();
 
         $previousActiveUsers = DB::table('users')
@@ -373,6 +378,9 @@ new class extends Component
                     'transactions.discount_price',
                     'transactions.tax',
                     'transactions.total_amount',
+                    ...(Schema::hasColumn('transactions', 'adjusted_total_amount')
+                        ? ['transactions.adjusted_total_amount']
+                        : []),
                     'transactions.status',
                     'transactions.created_at',
                     'users.first_name as employee_first_name',
@@ -401,7 +409,7 @@ new class extends Component
                             2
                         ),
                         'total_amount' => '₱'.number_format(
-                            (float) ($record->total_amount ?? 0),
+                            (float) ($record->adjusted_total_amount ?? $record->total_amount ?? 0),
                             2
                         ),
                         'status' => $record->status ?? '—',
@@ -595,7 +603,8 @@ new class extends Component
             'discount_category' => $transaction->discount_category,
             'discount_price' => (float) $transaction->discount_price,
             'tax' => (float) $transaction->tax,
-            'total_amount' => (float) $transaction->total_amount,
+            'total_amount' => (float) ($transaction->adjusted_total_amount ?? $transaction->total_amount),
+            'original_total_amount' => (float) $transaction->total_amount,
             'status' => $transaction->status,
             'employee' => trim(($transaction->employee_first_name ?? '').' '.($transaction->employee_last_name ?? '')),
             'created_at' => $transaction->created_at,
@@ -657,7 +666,11 @@ new class extends Component
                     $date->copy()->startOfMonth(),
                     $date->copy()->endOfMonth(),
                 ])
-                ->sum('total_amount');
+                ->sum(
+                    Schema::hasColumn('transactions', 'adjusted_total_amount')
+                        ? DB::raw('COALESCE(adjusted_total_amount, total_amount)')
+                        : 'total_amount'
+                );
 
             $this->salesData[] = round(
                 (float) $sales,
@@ -685,9 +698,8 @@ new class extends Component
                 'product_categories.id',
                 'product_categories.name'
             )
-            ->orderBy(
-                'product_categories.name'
-            )
+            ->orderByDesc('quantity')
+            ->orderBy('product_categories.name')
             ->get();
 
         $this->categoryLabels = $categories
@@ -746,6 +758,9 @@ new class extends Component
                 'transactions.last_name',
                 'transactions.payment_method',
                 'transactions.total_amount',
+                ...(Schema::hasColumn('transactions', 'adjusted_total_amount')
+                    ? ['transactions.adjusted_total_amount']
+                    : []),
                 'transactions.status',
                 'transactions.created_at',
                 'users.first_name as employee_first_name',
@@ -983,7 +998,7 @@ new class extends Component
 
     protected function getSalesExportData($from, $to)
     {
-        return DB::table('transactions')
+        $transactions = DB::table('transactions')
             ->leftJoin(
                 'users',
                 'users.id',
@@ -992,15 +1007,12 @@ new class extends Component
             )
             ->select([
                 'transactions.id',
-                'transactions.id_number',
-                'transactions.first_name',
-                'transactions.last_name',
                 'transactions.payment_method',
                 'transactions.reference_num',
-                'transactions.discount_category',
-                'transactions.discount_price',
-                'transactions.tax',
                 'transactions.total_amount',
+                ...(Schema::hasColumn('transactions', 'adjusted_total_amount')
+                    ? ['transactions.adjusted_total_amount']
+                    : []),
                 'transactions.cash',
                 'transactions.change',
                 'transactions.status',
@@ -1023,6 +1035,35 @@ new class extends Component
                 'transactions.created_at'
             )
             ->get();
+
+        $itemsByTransaction = DB::table('orders')
+            ->leftJoin('product_items', 'product_items.id', '=', 'orders.product_id')
+            ->whereIn('orders.transaction_id', $transactions->pluck('id'))
+            ->select([
+                'orders.transaction_id',
+                'orders.product_id',
+                'product_items.name',
+                DB::raw('COUNT(*) as quantity'),
+            ])
+            ->groupBy('orders.transaction_id', 'orders.product_id', 'product_items.name')
+            ->orderBy('product_items.name')
+            ->get()
+            ->groupBy('transaction_id');
+
+        return $transactions->each(function ($transaction) use ($itemsByTransaction) {
+            $transaction->purchased_items = $itemsByTransaction
+                ->get($transaction->id, collect())
+                ->map(fn ($item) => ($item->name ?? 'Deleted product #'.$item->product_id).' × '.number_format((int) $item->quantity))
+                ->implode(', ');
+        });
+    }
+
+    protected function generatedByLabel(): string
+    {
+        $user = auth()->user();
+        $name = trim(($user->first_name ?? '').' '.($user->last_name ?? ''));
+
+        return $name !== '' ? $name : $user->email;
     }
 
     protected function getInventoryExportData($from, $to)
@@ -1157,6 +1198,11 @@ new class extends Component
                     'w'
                 );
 
+                fputcsv($handle, ['Generated By', $this->generatedByLabel()]);
+                fputcsv($handle, ['Generated At', now()->format('M d, Y h:i A')]);
+                fputcsv($handle, ['Timeframe', $this->exportRangeLabel()]);
+                fputcsv($handle, []);
+
                 if ($this->exportData === 'all') {
 
                     $this->writeSalesCsv(
@@ -1223,13 +1269,9 @@ new class extends Component
 
         fputcsv($handle, [
             'Transaction ID',
-            'Customer ID',
-            'Customer',
+            'Purchased Items',
             'Payment Method',
             'Reference Number',
-            'Discount Category',
-            'Discount',
-            'Tax',
             'Total Amount',
             'Cash',
             'Change',
@@ -1247,37 +1289,13 @@ new class extends Component
 
             fputcsv($handle, [
                 $transaction->id,
-
-                $transaction->id_number,
-
-                trim(
-                    $transaction->first_name.
-                    ' '.
-                    $transaction->last_name
-                ),
-
-                $transaction->payment_method,
+                $transaction->purchased_items ?: '—',
+                ucwords(strtolower((string) $transaction->payment_method)),
 
                 $transaction->reference_num,
 
-                $transaction->discount_category,
-
                 number_format(
-                    (float) $transaction->discount_price,
-                    2,
-                    '.',
-                    ''
-                ),
-
-                number_format(
-                    (float) $transaction->tax,
-                    2,
-                    '.',
-                    ''
-                ),
-
-                number_format(
-                    (float) $transaction->total_amount,
+                    (float) ($transaction->adjusted_total_amount ?? $transaction->total_amount),
                     2,
                     '.',
                     ''
@@ -1297,7 +1315,7 @@ new class extends Component
                     ''
                 ),
 
-                $transaction->status,
+                ucwords(strtolower((string) $transaction->status)),
 
                 trim(
                     ($transaction->employee_first_name ?? '').
@@ -1305,7 +1323,7 @@ new class extends Component
                     ($transaction->employee_last_name ?? '')
                 ),
 
-                $transaction->created_at,
+                Carbon::parse($transaction->created_at)->format('M d, Y h:i A'),
             ]);
         }
 
@@ -1595,6 +1613,7 @@ new class extends Component
                 'M d, Y h:i A'
             )
         );
+        $generatedBy = $this->pdfText($this->generatedByLabel());
 
         $html = '
             <!DOCTYPE html>
@@ -1669,7 +1688,11 @@ new class extends Component
                     </p>
 
                     <p>
-                        Generated: '.$generatedAt.'
+                        Generated At: '.$generatedAt.'
+                    </p>
+
+                    <p>
+                        Generated By: '.$generatedBy.'
                     </p>
 
                 </div>
@@ -1683,7 +1706,7 @@ new class extends Component
         ) {
 
             $totalSales = $sales->sum(
-                fn ($transaction) => (float) $transaction->total_amount
+                fn ($transaction) => (float) ($transaction->adjusted_total_amount ?? $transaction->total_amount)
             );
 
             $html .= '
@@ -1707,14 +1730,11 @@ new class extends Component
                     <thead>
 
                         <tr>
-                            <th>ID</th>
-                            <th>Customer ID</th>
-                            <th>Customer</th>
-                            <th>Payment</th>
-                            <th>Reference</th>
-                            <th>Discount</th>
-                            <th>Tax</th>
-                            <th>Total</th>
+                            <th>Transaction ID</th>
+                            <th>Purchased Items</th>
+                            <th>Payment Method</th>
+                            <th>Reference Number</th>
+                            <th>Total Amount</th>
                             <th>Status</th>
                             <th>Employee</th>
                             <th>Date</th>
@@ -1726,13 +1746,6 @@ new class extends Component
             ';
 
             foreach ($sales as $transaction) {
-
-                $customer = trim(
-                    $transaction->first_name.
-                    ' '.
-                    $transaction->last_name
-                );
-
                 $employee = trim(
                     ($transaction->employee_first_name ?? '').
                     ' '.
@@ -1757,19 +1770,13 @@ new class extends Component
 
                         <td>'.
                             $this->pdfText(
-                                $transaction->id_number
+                                $transaction->purchased_items ?: '—'
                             ).
                         '</td>
 
                         <td>'.
                             $this->pdfText(
-                                $customer
-                            ).
-                        '</td>
-
-                        <td>'.
-                            $this->pdfText(
-                                $transaction->payment_method
+                                ucwords(strtolower((string) $transaction->payment_method))
                             ).
                         '</td>
 
@@ -1782,30 +1789,14 @@ new class extends Component
                         <td class="right">
                             PHP '.
                             number_format(
-                                (float) $transaction->discount_price,
-                                2
-                            ).
-                        '</td>
-
-                        <td class="right">
-                            PHP '.
-                            number_format(
-                                (float) $transaction->tax,
-                                2
-                            ).
-                        '</td>
-
-                        <td class="right">
-                            PHP '.
-                            number_format(
-                                (float) $transaction->total_amount,
+                                (float) ($transaction->adjusted_total_amount ?? $transaction->total_amount),
                                 2
                             ).
                         '</td>
 
                         <td>'.
                             $this->pdfText(
-                                $transaction->status
+                                ucwords(strtolower((string) $transaction->status))
                             ).
                         '</td>
 
@@ -2228,16 +2219,15 @@ new class extends Component
 
     </x-wirekit::stats>
 
-    <div wire:ignore class="grid grid-cols-3 gap-4 w-full h-full">
-
-        <div class="flex flex-col w-full col-span-2">
+    <div wire:ignore class="grid grid-cols-1 gap-4 w-full lg:grid-cols-3">
+        <div class="flex min-w-0 flex-col lg:col-span-2">
 
             <x-wirekit-chart
                 library="apexcharts"
                 type="line"
                 valueDecimals="2"
                 valuePrefix="₱"
-                height="100%"
+                height="360px"
                 :labels="$salesLabels"
                 :datasets="[
                     [
@@ -2250,19 +2240,11 @@ new class extends Component
 
         </div>
 
-        <div class="grid grid-cols-1 grid-rows-2 gap-4">
-
-            <x-wirekit-chart
-                type="doughnut"
-                :labels="$categoryLabels"
-                :datasets="[
-                    [
-                        'data' => $categoryData,
-                    ]
-                ]"
-                height="100"
-                aria-label="Doughnut chart showing current inventory by category"
-            />
+        <section class="flex flex-col gap-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-700">
+            <div>
+                <h2 class="font-semibold">Transactions by payment method</h2>
+                <p class="text-sm text-zinc-500">Completed and paid transactions</p>
+            </div>
 
             <x-wirekit-chart
                 type="doughnut"
@@ -2272,12 +2254,39 @@ new class extends Component
                         'data' => $paymentData,
                     ]
                 ]"
-                height="100"
+                height="280px"
                 aria-label="Doughnut chart showing transactions by payment method"
             />
+        </section>
 
-        </div>
+        <section class="flex min-w-0 flex-col gap-2 rounded-xl border border-zinc-200 p-4 dark:border-zinc-700 lg:col-span-3">
+            <div>
+                <h2 class="font-semibold">Inventory stock by category</h2>
+                <p class="text-sm text-zinc-500">Categories are ranked by total stock</p>
+            </div>
 
+            <x-wirekit-chart
+                type="bar"
+                :labels="$categoryLabels"
+                :datasets="[
+                    [
+                        'label' => 'Units in stock',
+                        'data' => $categoryData,
+                    ]
+                ]"
+                :options="[
+                    'plotOptions' => [
+                        'bar' => [
+                            'horizontal' => true,
+                            'barHeight' => '65%',
+                        ],
+                    ],
+                    'legend' => ['show' => false],
+                ]"
+                height="{{ min(640, max(280, count($categoryLabels) * 28 + 80)) }}px"
+                aria-label="Horizontal bar chart showing inventory stock by category, ranked from most to least stock"
+            />
+        </section>
     </div>
 
     <flux:modal
@@ -2542,7 +2551,10 @@ new class extends Component
             </div>
 
             <div class="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-700">
-                <span class="font-semibold">Total</span>
+                <div>
+                    <span class="block font-semibold">Amount collected</span>
+                    <span class="text-xs text-zinc-500">Original total: ₱{{ number_format((float) ($transactionRecordDetails['original_total_amount'] ?? $transactionRecordDetails['total_amount'] ?? 0), 2) }}</span>
+                </div>
                 <span class="text-lg font-bold">₱{{ number_format((float) ($transactionRecordDetails['total_amount'] ?? 0), 2) }}</span>
             </div>
 

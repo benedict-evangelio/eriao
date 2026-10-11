@@ -134,6 +134,7 @@ new #[Title('Security settings')] class extends Component {
 
         $this->closeDeleteModal();
         $this->loadPasskeys();
+        Flux::toast(variant: 'success', text: __('Passkey removed.'));
     }
 
     /**
@@ -153,6 +154,7 @@ new #[Title('Security settings')] class extends Component {
     public function onTwoFactorEnabled(): void
     {
         $this->twoFactorEnabled = true;
+        Flux::toast(variant: 'success', text: __('Two-factor authentication enabled.'));
     }
 
     /**
@@ -163,6 +165,7 @@ new #[Title('Security settings')] class extends Component {
         $disableTwoFactorAuthentication(auth()->user());
 
         $this->twoFactorEnabled = false;
+        Flux::toast(variant: 'success', text: __('Two-factor authentication disabled.'));
     }
 }; ?>
 

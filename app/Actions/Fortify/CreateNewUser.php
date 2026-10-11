@@ -24,8 +24,15 @@ class CreateNewUser implements CreatesNewUsers
             'password' => $this->passwordRules(),
         ])->validate();
 
+        [$firstName, $lastName] = array_pad(
+            preg_split('/\s+/', trim($input['name']), 2) ?: [],
+            2,
+            '',
+        );
+
         return User::create([
-            'name' => $input['name'],
+            'first_name' => $firstName,
+            'last_name' => $lastName,
             'email' => $input['email'],
             'password' => $input['password'],
         ]);

@@ -2,24 +2,24 @@
 
 use App\Models\User;
 use Laravel\Fortify\Features;
+use Livewire\Livewire;
 
 test('login screen can be rendered', function () {
     $response = $this->get(route('login'));
 
-    $response->assertOk();
+    $response->assertRedirect(route('sign-in'));
+
+    $this->get(route('sign-in'))->assertOk();
 });
 
 test('users can authenticate using the login screen', function () {
     $user = User::factory()->create();
 
-    $response = $this->post(route('login.store'), [
-        'email' => $user->email,
-        'password' => 'password',
-    ]);
-
-    $response
-        ->assertSessionHasNoErrors()
-        ->assertRedirect(route('dashboard', absolute: false));
+    Livewire::test('authentication.sign-in-form')
+        ->set('emailAddress', $user->email)
+        ->set('password', 'password')
+        ->call('onSignIn')
+        ->assertRedirect('/employee/dashboard');
 
     $this->assertAuthenticated();
 });
@@ -27,12 +27,22 @@ test('users can authenticate using the login screen', function () {
 test('users can not authenticate with invalid password', function () {
     $user = User::factory()->create();
 
-    $response = $this->post(route('login.store'), [
-        'email' => $user->email,
-        'password' => 'wrong-password',
-    ]);
+    Livewire::test('authentication.sign-in-form')
+        ->set('emailAddress', $user->email)
+        ->set('password', 'wrong-password')
+        ->call('onSignIn')
+        ->assertHasErrors(['password']);
 
-    $response->assertSessionHasErrorsIn('email');
+    $this->assertGuest();
+});
+
+test('inactive users are not left authenticated after a sign-in attempt', function () {
+    $user = User::factory()->create(['status' => 'inactive']);
+
+    Livewire::test('authentication.sign-in-form')
+        ->set('emailAddress', $user->email)
+        ->set('password', 'password')
+        ->call('onSignIn');
 
     $this->assertGuest();
 });
@@ -47,12 +57,12 @@ test('users with two factor enabled are redirected to two factor challenge', fun
 
     $user = User::factory()->withTwoFactor()->create();
 
-    $response = $this->post(route('login.store'), [
-        'email' => $user->email,
-        'password' => 'password',
-    ]);
+    Livewire::test('authentication.sign-in-form')
+        ->set('emailAddress', $user->email)
+        ->set('password', 'password')
+        ->call('onSignIn')
+        ->assertRedirect(route('two-factor.login'));
 
-    $response->assertRedirect(route('two-factor.login'));
     $this->assertGuest();
 });
 

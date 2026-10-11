@@ -11,13 +11,13 @@ class RoleMiddleware
     public function handle(
         Request $request,
         Closure $next,
-        ...$roles
+        string ...$roles
     ): Response {
         if (! $request->user()) {
             abort(401);
         }
 
-        if (! $request->user()->hasRole($roles)) {
+        if (! $request->user()->hasRole(array_values($roles))) {
             abort(403);
         }
 

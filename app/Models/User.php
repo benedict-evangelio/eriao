@@ -6,6 +6,7 @@ namespace App\Models;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -28,7 +29,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
-#[Fillable(['first_name', 'last_name', 'email', 'role', 'status', 'password'])]
+#[Fillable(['first_name', 'last_name', 'name', 'email', 'role', 'status', 'password'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
 class User extends Authenticatable implements PasskeyUser
 {
@@ -60,6 +61,26 @@ class User extends Authenticatable implements PasskeyUser
             : $initials;
     }
 
+    /** @return Attribute<string, array{first_name: string, last_name: string}> */
+    protected function name(): Attribute
+    {
+        return Attribute::make(
+            get: fn (): string => trim($this->first_name.' '.$this->last_name),
+            set: function (string $value): array {
+                [$firstName, $lastName] = array_pad(
+                    preg_split('/\s+/', trim($value), 2) ?: [],
+                    2,
+                    '',
+                );
+
+                return [
+                    'first_name' => $firstName,
+                    'last_name' => $lastName,
+                ];
+            },
+        );
+    }
+
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
@@ -80,6 +101,9 @@ class User extends Authenticatable implements PasskeyUser
         return $this->role === 'employee';
     }
 
+    /**
+     * @param  string|array<int, string>  $roles
+     */
     public function hasRole(string|array $roles): bool
     {
         return in_array($this->role, (array) $roles, true);

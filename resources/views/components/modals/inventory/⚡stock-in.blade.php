@@ -4,6 +4,8 @@ use Livewire\Component;
 use App\Models\ProductItem;
 use Livewire\Attributes\On;
 use Flux\Flux;
+use App\Models\CollegeRequestItem;
+use Illuminate\Support\Facades\DB;
 
 new class extends Component
 {
@@ -23,30 +25,45 @@ new class extends Component
     }
 
     public function onSave() {
+        $this->resetErrorBag('newQuantity');
+
         $this->validate([
             'newQuantity' => 'required|integer|min:1',
         ]);
 
-        $frontQuantity = (int) $this->productDetails->front_quantity;
-        $warehouseQuantity = (int) $this->productDetails->warehouse_quantity;
+        DB::transaction(function () {
+            $product = ProductItem::query()
+                ->whereKey($this->productID)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $frontQuantity = (int) $product->front_quantity;
+            $warehouseQuantity = (int) $product->warehouse_quantity;
+            $reservedQuantity = CollegeRequestItem::reservedWarehouseQuantity($product->id);
 
-        if ((int) $this->newQuantity > $warehouseQuantity) {
-            $this->addError('newQuantity', 'Cannot move more stock than is available in the warehouse.');
+            if ((int) $this->newQuantity > $warehouseQuantity - $reservedQuantity) {
+                $this->addError('newQuantity', 'Cannot move stock reserved for signed college requests.');
 
+                return;
+            }
+
+            $frontQuantity += (int) $this->newQuantity;
+            $warehouseQuantity -= (int) $this->newQuantity;
+
+            $product->update([
+                'quantity' => $frontQuantity + $warehouseQuantity,
+                'front_quantity' => $frontQuantity,
+                'warehouse_quantity' => $warehouseQuantity,
+                'status' => 'available',
+            ]);
+        });
+
+        if ($this->getErrorBag()->has('newQuantity')) {
             return;
         }
 
-        $frontQuantity += (int) $this->newQuantity;
-        $warehouseQuantity -= (int) $this->newQuantity;
-
-        ProductItem::where('id', $this->productID)->update([
-            'quantity' => $frontQuantity + $warehouseQuantity,
-            'front_quantity' => $frontQuantity,
-            'warehouse_quantity' => $warehouseQuantity,
-            'status' => 'available',
-        ]);
         $this->dispatch('onRefreshProducts');
         $this->onClose();
+        Flux::toast(variant: 'success', text: 'Stock moved to front inventory.');
     }
 
     public function onClose() {

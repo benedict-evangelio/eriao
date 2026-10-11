@@ -510,6 +510,7 @@ new class extends Component
         $this->dispatch('onRefreshPurchaseOrders');
 
         $this->resetPagination();
+        Flux::toast(variant: 'success', text: 'Purchase order approved.');
     }
 
     public function rejectOrder(): void
@@ -538,6 +539,7 @@ new class extends Component
         $this->dispatch('onRefreshPurchaseOrders');
 
         $this->resetPagination();
+        Flux::toast(variant: 'success', text: 'Purchase order rejected.');
     }
 
     public function receiveOrder(): void
@@ -546,7 +548,7 @@ new class extends Component
             return;
         }
 
-        DB::transaction(function () {
+        $received = DB::transaction(function () {
 
             $order = PurchaseOrder::query()
                 ->where('id', $this->confirmationOrderId)
@@ -555,7 +557,7 @@ new class extends Component
                 ->first();
 
             if (!$order) {
-                return;
+                return false;
             }
 
             $items = PurchaseOrderItems::query()
@@ -629,7 +631,15 @@ new class extends Component
             $order->update([
                 'status' => $isComplete ? 'completed' : 'incomplete',
             ]);
+
+            return true;
         });
+
+        if (! $received) {
+            $this->closeConfirmationModals();
+
+            return;
+        }
 
         $this->closeConfirmationModals();
 
@@ -637,6 +647,7 @@ new class extends Component
         $this->dispatch('onRefreshProducts');
 
         $this->resetPagination();
+        Flux::toast(variant: 'success', text: 'Purchase order delivery received and inventory updated.');
     }
 
     public function cancelOrder(): void
@@ -664,6 +675,7 @@ new class extends Component
         $this->dispatch('onRefreshPurchaseOrders');
 
         $this->resetPagination();
+        Flux::toast(variant: 'success', text: 'Purchase order cancelled.');
     }
 
     public function archiveOrder(): void
@@ -691,6 +703,7 @@ new class extends Component
         $this->dispatch('onRefreshPurchaseOrders');
 
         $this->resetPagination();
+        Flux::toast(variant: 'success', text: 'Purchase order archived.');
     }
 
     public function closeConfirmationModals(): void
@@ -704,6 +717,7 @@ new class extends Component
         $this->confirmationOrderId = null;
         $this->confirmationAction = '';
         $this->receivedQuantities = [];
+        unset($this->selectedOrder, $this->selectedOrderItems);
     }
 
     public function clearFilters(): void
@@ -989,58 +1003,6 @@ new class extends Component
                                         >
                                             View
                                         </flux:menu.item>
-
-                                        @if ($order->status === 'pending')
-
-                                            @if(Auth::user()->role == 'admin')
-                                                <flux:menu.item
-                                                    wire:click="confirmApprove({{ $order->id }})"
-                                                    icon="check"
-                                                >
-                                                    Approve
-                                                </flux:menu.item>
-
-                                                <flux:menu.item
-                                                    wire:click="confirmReject({{ $order->id }})"
-                                                    icon="x-mark"
-                                                    variant="danger"
-                                                >
-                                                    Reject
-                                                </flux:menu.item>
-                                            @endif
-
-                                        @endif
-
-                                        @if (in_array($order->status, ['approved', 'incomplete'], true))
-
-                                            @if(Auth::user()->role === 'admin' || Auth::user()->role === 'employee' || Auth::user()->role === 'staff')
-                                                <flux:menu.item
-                                                    wire:click="confirmReceive({{ $order->id }})"
-                                                    icon="cube"
-                                                >
-                                                    Received
-                                                </flux:menu.item>
-                                            @endif
-
-                                            @if(Auth::user()->role === 'admin')
-                                                <flux:menu.item
-                                                    wire:click="confirmCancel({{ $order->id }})"
-                                                    icon="x-circle"
-                                                    variant="danger"
-                                                >
-                                                    Cancelled
-                                                </flux:menu.item>
-
-                                                <flux:menu.item
-                                                    wire:click="confirmArchive({{ $order->id }})"
-                                                    icon="archive-box"
-                                                >
-                                                    Archive
-                                                </flux:menu.item>
-                                            @endif
-
-                                        @endif
-
                                     </flux:menu>
 
                                 </flux:dropdown>
@@ -1467,7 +1429,35 @@ new class extends Component
 
                 @endif
 
-                <div class="flex justify-end">
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    @if ($this->selectedOrder->status === 'pending' && Auth::user()->role === 'admin')
+                        <flux:button icon="check" variant="primary" wire:click="confirmApprove({{ $this->selectedOrder->id }})">
+                            Approve
+                        </flux:button>
+                        <flux:button icon="x-mark" variant="danger" wire:click="confirmReject({{ $this->selectedOrder->id }})">
+                            Reject
+                        </flux:button>
+                    @endif
+
+                    @if (in_array($this->selectedOrder->status, ['approved', 'incomplete'], true))
+                        @if (in_array(Auth::user()->role, ['admin', 'employee', 'staff'], true))
+                            <flux:button icon="cube" variant="primary" wire:click="confirmReceive({{ $this->selectedOrder->id }})">
+                                Received
+                            </flux:button>
+                        @endif
+
+                        @if ($this->selectedOrder->status === 'approved' && Auth::user()->role === 'admin')
+                            <flux:button icon="x-circle" variant="danger" wire:click="confirmCancel({{ $this->selectedOrder->id }})">
+                                Cancel
+                            </flux:button>
+                        @endif
+                    @endif
+
+                    @if ($this->selectedOrder->status !== 'archived' && Auth::user()->role === 'admin')
+                        <flux:button icon="archive-box" variant="outline" wire:click="confirmArchive({{ $this->selectedOrder->id }})">
+                            Archive
+                        </flux:button>
+                    @endif
 
                     <flux:modal.close>
                         <flux:button variant="ghost">

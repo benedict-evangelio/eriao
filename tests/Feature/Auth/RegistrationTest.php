@@ -1,6 +1,7 @@
 <?php
 
 use Laravel\Fortify\Features;
+use Livewire\Livewire;
 
 beforeEach(function () {
     $this->skipUnlessFortifyHas(Features::registration());
@@ -9,19 +10,25 @@ beforeEach(function () {
 test('registration screen can be rendered', function () {
     $response = $this->get(route('register'));
 
-    $response->assertOk();
+    $response->assertRedirect(route('sign-up'));
+
+    $this->get(route('sign-up'))->assertOk();
 });
 
 test('new users can register', function () {
-    $response = $this->post(route('register.store'), [
-        'name' => 'John Doe',
-        'email' => 'test@example.com',
-        'password' => 'password',
-        'password_confirmation' => 'password',
-    ]);
+    Livewire::test('authentication.sign-up-form')
+        ->set('firstName', 'John')
+        ->set('lastName', 'Doe')
+        ->set('emailAddress', 'test@example.com')
+        ->set('password', 'password')
+        ->call('onCreateAccount')
+        ->assertHasNoErrors();
 
-    $response->assertSessionHasNoErrors()
-        ->assertRedirect(route('dashboard', absolute: false));
+    $this->assertDatabaseHas('users', [
+        'first_name' => 'John',
+        'last_name' => 'Doe',
+        'email' => 'test@example.com',
+    ]);
 
     $this->assertAuthenticated();
 });

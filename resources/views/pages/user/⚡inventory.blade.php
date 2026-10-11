@@ -6,6 +6,8 @@ use Livewire\Attributes\Renderless;
 use App\Models\ProductItem;
 use App\Models\ProductCategories;
 use App\Models\PurchaseOrderItems;
+use App\Models\CollegeRequestItem;
+use App\Enums\CollegeRequestStatus;
 use Illuminate\Support\Facades\DB;
 use Flux\Flux;
 
@@ -61,6 +63,13 @@ new class extends Component
             ->select([
                 'product_items.*',
                 'product_categories.name as product_category_name',
+            ])
+            ->addSelect([
+                'reserved_warehouse_quantity' => CollegeRequestItem::query()
+                    ->selectRaw('COALESCE(SUM(college_request_items.quantity), 0)')
+                    ->join('college_requests', 'college_requests.id', '=', 'college_request_items.college_request_id')
+                    ->whereColumn('college_request_items.product_id', 'product_items.id')
+                    ->where('college_requests.status', CollegeRequestStatus::Signed->value),
             ])
             ->when(trim($this->search) !== '', function ($query) {
                 $search = '%' . trim($this->search) . '%';
@@ -197,73 +206,102 @@ new class extends Component
             ],
         ]);
 
-        $product = ProductItem::find($this->selectedProductId);
+        $updated = DB::transaction(function () {
+            $product = ProductItem::query()
+                ->whereKey($this->selectedProductId)
+                ->lockForUpdate()
+                ->first();
 
-        if (!$product) {
-            $this->closeUpdateModal();
+            if (! $product) {
+                return false;
+            }
+
+            $newDefectiveQuantity = (int) $this->productDefectiveQuantity;
+            $defectiveIncrease = $newDefectiveQuantity - (int) $product->defective_quantity;
+            $frontQuantity = (int) $product->front_quantity;
+            $warehouseQuantity = (int) $product->warehouse_quantity;
+            $reservedWarehouseQuantity = CollegeRequestItem::reservedWarehouseQuantity($product->id);
+
+            if ((int) $this->productMoveToWarehouse > $frontQuantity) {
+                $this->addError(
+                    'productMoveToWarehouse',
+                    'Cannot move more stock than is available in front inventory.'
+                );
+
+                return false;
+            }
+
+            $frontQuantity -= (int) $this->productMoveToWarehouse;
+            $warehouseQuantity += (int) $this->productMoveToWarehouse;
+
+            if ($reservedWarehouseQuantity > $warehouseQuantity) {
+                $this->addError(
+                    'productDefectiveQuantity',
+                    'Warehouse stock is below the quantity reserved for signed college requests.'
+                );
+
+                return false;
+            }
+
+            if ($defectiveIncrease > 0) {
+                $deductFromWarehouse = min(
+                    $defectiveIncrease,
+                    $warehouseQuantity - $reservedWarehouseQuantity
+                );
+                $deductFromFront = $defectiveIncrease - $deductFromWarehouse;
+
+                if ($deductFromFront > $frontQuantity) {
+                    $this->addError(
+                        'productDefectiveQuantity',
+                        'Defective quantity cannot exceed unreserved warehouse and front inventory.'
+                    );
+
+                    return false;
+                }
+
+                $warehouseQuantity -= $deductFromWarehouse;
+                $frontQuantity -= $deductFromFront;
+            }
+
+            $totalQuantity = $frontQuantity + $warehouseQuantity;
+            $maximumQuantity = max((int) $this->productMax, $totalQuantity);
+
+            $product->update([
+                'name' => $this->productName,
+                'category_id' => $this->productCategory,
+                'price' => $this->productPrice,
+                'quantity' => $totalQuantity,
+                'max' => $maximumQuantity,
+                'reorder_level' => $this->productReorderLevel,
+                'front_quantity' => $frontQuantity,
+                'warehouse_quantity' => $warehouseQuantity,
+                'defective_quantity' => $newDefectiveQuantity,
+                'status' => $totalQuantity > 0
+                    ? (
+                        $this->productStatus === 'out_of_stock'
+                            ? 'available'
+                            : $this->productStatus
+                    )
+                    : $this->productStatus,
+            ]);
+
+            return true;
+        });
+
+        if (! $updated) {
+            if (! ProductItem::whereKey($this->selectedProductId)->exists()) {
+                $this->closeUpdateModal();
+            }
+
             return;
         }
-
-        $newDefectiveQuantity = (int) $this->productDefectiveQuantity;
-        $defectiveIncrease = $newDefectiveQuantity - (int) $product->defective_quantity;
-        $frontQuantity = (int) $this->productFrontQuantity;
-        $warehouseQuantity = (int) $product->warehouse_quantity;
-
-        if ((int) $this->productMoveToWarehouse > $frontQuantity) {
-            $this->addError(
-                'productMoveToWarehouse',
-                'Cannot move more stock than is available in front inventory.'
-            );
-
-            return;
-        }
-
-        $frontQuantity -= (int) $this->productMoveToWarehouse;
-        $warehouseQuantity += (int) $this->productMoveToWarehouse;
-
-        if ($defectiveIncrease > $warehouseQuantity) {
-            $this->addError(
-                'productDefectiveQuantity',
-                'Defective quantity cannot exceed the available warehouse stock.'
-            );
-
-            return;
-        }
-
-        if ($defectiveIncrease > 0) {
-            $warehouseQuantity -= $defectiveIncrease;
-        }
-
-        $totalQuantity = $frontQuantity + $warehouseQuantity;
-
-        if ($totalQuantity > (int) $this->productMax) {
-            $this->productMax = $totalQuantity;
-        }
-
-        $product->update([
-            'name' => $this->productName,
-            'category_id' => $this->productCategory,
-            'price' => $this->productPrice,
-            'quantity' => $totalQuantity,
-            'max' => $this->productMax,
-            'reorder_level' => $this->productReorderLevel,
-            'front_quantity' => $frontQuantity,
-            'warehouse_quantity' => $warehouseQuantity,
-            'defective_quantity' => $newDefectiveQuantity,
-            'status' => $totalQuantity > 0
-                ? (
-                    $this->productStatus === 'out_of_stock'
-                        ? 'available'
-                        : $this->productStatus
-                )
-                : $this->productStatus,
-        ]);
 
         $this->loadProducts();
 
         $this->dispatch('onRefreshProducts');
 
         $this->closeUpdateModal();
+        Flux::toast(variant: 'success', text: 'Inventory item updated.');
     }
 
     public function onDeleteProduct(int $id)
@@ -300,7 +338,11 @@ new class extends Component
             ->where('product_id', $product->id)
             ->exists();
 
-        if ($hasPurchaseOrders || $hasTransactions) {
+        $hasCollegeRequests = CollegeRequestItem::query()
+            ->where('product_id', $product->id)
+            ->exists();
+
+        if ($hasPurchaseOrders || $hasTransactions || $hasCollegeRequests) {
             Flux::modal('delete-item')->close();
             Flux::modal('delete-item-error')->show();
             return;
@@ -313,6 +355,7 @@ new class extends Component
         $this->dispatch('onRefreshProducts');
 
         $this->closeDeleteModal();
+        Flux::toast(variant: 'success', text: 'Inventory item deleted.');
     }
 
     public function closeUpdateModal()
@@ -546,6 +589,7 @@ new class extends Component
                     <div>
                         <span class="text-zinc-500">Warehouse</span>
                         <p class="font-medium">{{ $product->warehouse_quantity }}</p>
+                        <span class="text-xs text-zinc-500">Reserved: {{ $product->reserved_warehouse_quantity }}</span>
                     </div>
                     <div>
                         <span class="text-zinc-500">Re-order level</span>
@@ -822,7 +866,7 @@ new class extends Component
                 </p>
 
                 <p class="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-                    This inventory item is already used by a purchase order or transaction.
+                    This inventory item is already used by a purchase order, transaction, or college request.
                     It cannot be deleted because those records depend on this product.
                 </p>
 

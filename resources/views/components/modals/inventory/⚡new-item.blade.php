@@ -84,6 +84,7 @@ new class extends Component
 
         $this->dispatch('onRefreshProducts');
         $this->onClose();
+        Flux::toast(variant: 'success', text: 'Inventory item created.');
     }
 
     public function openNewCategoryModal()
@@ -106,6 +107,7 @@ new class extends Component
         $this->refreshCategories();
         $this->category = $category->id;
         Flux::modal('new-category')->close();
+        Flux::toast(variant: 'success', text: 'Category saved.');
     }
 
     public function closeNewCategoryModal()
